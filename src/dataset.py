@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import torch as tr
 from torch.utils.data import Dataset
+from Bio import SeqIO
 
 class PFamDataset(Dataset):
     """
@@ -10,7 +11,7 @@ class PFamDataset(Dataset):
     Proteins have precomputed per-residue embeddings.
     """
     def __init__(self, dataset_path, emb_path, categories, win_len,
-                 debug=False, is_training=False):
+                 debug=False, is_training=False, sequences=None):
         """
         Initialize the PFamDataset.
         Args:
@@ -26,6 +27,9 @@ class PFamDataset(Dataset):
         self.categories = categories
         self.win_len = win_len
         self.is_training = is_training
+        self.sequences = sequences
+        if sequences is not None:
+            self.sequences = {record.id: str(record.seq) for record in SeqIO.parse(sequences, "fasta")}
 
         if debug:
             self.dataset = self.dataset.sample(n=100)
@@ -41,9 +45,13 @@ class PFamDataset(Dataset):
         """Sample one random window from a domain entry"""
         item = self.dataset.iloc[item]
 
-        # Load precomputed embedding
-        emb = pickle.load(open(f"{self.emb_path}{item.PID}.pk", "rb")).squeeze()
-
+        # Load precomputed embedding or sequence
+        if self.emb_path is not None:
+            emb = pickle.load(open(f"{self.emb_path}{item.PID}.pk", "rb")).squeeze()
+            L = emb.shape[1]
+        else:
+            seq = self.sequences[item.PID]
+            L = len(seq)
         # Determine window center position
         if self.is_training:
             center = np.random.randint(item.start, item.end)
@@ -51,7 +59,7 @@ class PFamDataset(Dataset):
             center = (item.start + item.end)//2
 
         start = max(0, center - self.win_len//2)
-        end = min(emb.shape[1], center + self.win_len//2)
+        end = min(L, center + self.win_len//2)
 
         label = tr.zeros(len(self.categories))
 
@@ -68,8 +76,12 @@ class PFamDataset(Dataset):
             ind = tr.where(label==0)[0]
             label[ind] = (1-s)/len(ind)
 
-        # Extract embedding window
-        emb_win = tr.zeros((emb.shape[0], self.win_len), dtype=tr.float)
-        emb_win[:,:end-start] = emb[:, start:end]
+        # Extract window
+        if self.emb_path is not None:
+            win = tr.zeros((emb.shape[0], self.win_len), dtype=tr.float)
+            win[:,:end-start] = tr.tensor(emb[:, start:end], dtype=tr.float)
+        else:
+            win = seq[start:end]
+            
 
-        return emb_win, label, item.PID, start, end
+        return win, label, item.PID, start, end

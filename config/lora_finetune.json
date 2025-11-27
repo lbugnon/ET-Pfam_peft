@@ -1,0 +1,11 @@
+{
+    "window_len": 64,
+    "lr": 1e-06,
+    "batch_size": 32,
+    "nepoch": 500,
+    "patience": 10,
+    "step": 4,
+    "soft_max": false,
+    "use_embeddings": false,
+    "dataset": "mini"
+}

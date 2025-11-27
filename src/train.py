@@ -5,7 +5,8 @@ import torch as tr
 import torch.multiprocessing
 from torch.utils.data import DataLoader
 from src.dataset import PFamDataset
-from src.basemodel import BaseModel
+#from src.basemodel import BaseModel as BaseModel # TODO fix from the config
+from src.basemodel_lora import BaseModelLoRA as BaseModel
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 def train(config, categories, output_folder):
@@ -21,12 +22,12 @@ def train(config, categories, output_folder):
     summary = os.path.join(output_folder, "train_summary.csv")
 
     # Load training and validation datasets
-    train_data = PFamDataset(f"{config['data_path']}train.csv", config['emb_path'],
+    train_data = PFamDataset(f"{config['data_path']}train.csv", config['emb_path'] if config.get('use_embeddings', True) else None,
                             categories, win_len=config['window_len'],
-                            is_training=True)
-    dev_data = PFamDataset(f"{config['data_path']}dev.csv", config['emb_path'],
+                            is_training=True, sequences=f"{config['data_path']}train.fasta")
+    dev_data = PFamDataset(f"{config['data_path']}dev.csv", config['emb_path'] if config.get('use_embeddings', True) else None,
                         categories, win_len=config['window_len'],
-                        is_training=False)
+                        is_training=False, sequences=f"{config['data_path']}dev.fasta")
 
     print("train", len(train_data), "dev", len(dev_data))
 
