@@ -35,6 +35,7 @@ class BaseModelLoRA(nn.Module):
         )
 
         self.emb_model = get_peft_model(self.emb_model, lora_config)
+        
         print(self.emb_model)
         self.emb_size = emb_size 
 
@@ -61,11 +62,18 @@ class BaseModelLoRA(nn.Module):
         print("BaseModelLoRA initialized with", sum(p.numel() for p in self.parameters() if p.requires_grad), "trainable parameters. ESM2 PEFT parameters : ", 
               sum(p.numel() for p in self.emb_model.parameters() if p.requires_grad))
 
-    def forward(self, batch):
-        """batch is a tuple of sequences"""        
-        _, _, tokens = self.batch_converter([(k, s) for k, s in enumerate(batch)]) # TODO this could go to collate fn
+    def forward(self, seq, start, end):
+        """batch is a tuple of sequences"""  
+
+        _, _, tokens = self.batch_converter([(k, s) for k, s in enumerate(seq)]) # TODO this could go to collate fn
         emb = self.emb_model(tokens.to(self.device), repr_layers=[33])["representations"][33][: ,1:-1, :].permute(0,2,1)
-        y = self.cnn(emb)
+        
+        emb_win = tr.zeros((emb.shape[0], emb.shape[1], 64), dtype=tr.float).to(self.device)
+        for k in range(emb.shape[0]):
+            emb_win[k, :, :(end[k]-start[k])] = emb[k, :, start[k]:end[k]]
+
+
+        y = self.cnn(emb_win)
         y = self.fc(y.squeeze(2))
         return y
 
@@ -74,8 +82,8 @@ class BaseModelLoRA(nn.Module):
         avg_loss = 0
         self.cnn.train(), self.fc.train()
         self.optim.zero_grad()
-        for k,(x, y, *_) in enumerate(tqdm(dataloader)):
-            yhat = self(x)
+        for k,(x, y, _, start, end) in enumerate(tqdm(dataloader)):
+            yhat = self(x, start, end)
             y = y.to(self.device)
 
             loss = self.loss(yhat, y)
@@ -99,7 +107,7 @@ class BaseModelLoRA(nn.Module):
         
         for seq, y, name, start, end in tqdm(dataloader):
             with tr.no_grad():
-                yhat = self(seq)
+                yhat = self(seq, start, end)
                 y = y.to(self.device)
                 test_loss += self.loss(yhat, y).item()
 

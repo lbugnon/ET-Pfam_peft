@@ -81,7 +81,8 @@ class PFamDataset(Dataset):
             win = tr.zeros((emb.shape[0], self.win_len), dtype=tr.float)
             win[:,:end-start] = tr.tensor(emb[:, start:end], dtype=tr.float)
         else:
-            win = seq[start:end]
-            
+            # returning full seq
+            #win = seq[start:end]
+            win = seq
 
         return win, label, item.PID, start, end
