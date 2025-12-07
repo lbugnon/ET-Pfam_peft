@@ -54,7 +54,7 @@ class PFamDataset(Dataset):
             L = len(seq)
         # Determine window center position
         if self.is_training:
-            center = np.random.randint(item.start, item.end)
+            center = np.random.randint(item.start+self.win_len//2, item.end-self.win_len//2+1)
         else:
             center = (item.start + item.end)//2
 
@@ -82,7 +82,10 @@ class PFamDataset(Dataset):
             win[:,:end-start] = tr.tensor(emb[:, start:end], dtype=tr.float)
         else:
             # returning full seq
-            #win = seq[start:end]
-            win = seq
+            #win = seq[start:end] # window seq
+            # win = seq # full seq
+            win = seq[item.start:item.end]  # return domain sequence
+            start = start - item.start
+            end = end - item.start
 
         return win, label, item.PID, start, end
