@@ -7,3 +7,4 @@ ipykernel
 biopython
 tensorboard
 gdown
+peft

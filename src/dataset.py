@@ -80,16 +80,20 @@ class PFamDataset(Dataset):
             label[ind] = (1-s)/len(ind)
 
         # Extract window
-        if self.emb_path is not None:
+        if self.emb_path is not None: # embedding is providded
             win = tr.zeros((emb.shape[0], self.win_len), dtype=tr.float)
             win[:,:end-start] = tr.tensor(emb[:, start:end], dtype=tr.float)
-        else:
-            # returning full seq
-            #win = seq[start:end] # window seq
-            #win = seq # full seq
+        else: # embedding is computed on-the-fly
             
-            win = seq[item.start:item.end]  # return domain sequence
-            start = max(0, start - item.start)
-            end = end - item.start
+            # window seq (this has very low context and do not work well)
+            # win = seq[start:end] 
+            
+            # returning full seq (this should replicate baseline usage of embeddings)
+            win = seq 
+            
+            # return domain sequence (not valid in test)
+            #win = seq[item.start:item.end]  
+            #start = max(0, start - item.start)
+            #end = end - item.start
             
         return win, label, item.PID, start, end, emb
