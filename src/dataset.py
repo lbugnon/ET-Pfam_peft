@@ -32,7 +32,7 @@ class PFamDataset(Dataset):
             self.sequences = {record.id: str(record.seq) for record in SeqIO.parse(sequences, "fasta")}
 
         if debug:
-            self.dataset = self.dataset.sample(n=100)
+            self.dataset = self.dataset.sample(n=15)
 
     def __len__(self):
         return len(self.dataset)
@@ -46,12 +46,8 @@ class PFamDataset(Dataset):
         item = self.dataset.iloc[item]
 
         # Load precomputed embedding or sequence
-        emb = pickle.load(open(f"{self.emb_path}{item.PID}.pk", "rb")).squeeze()
         seq = self.sequences[item.PID]
-        if self.emb_path is not None:
-            L = emb.shape[1]
-        else:
-            L = len(seq)
+        L = len(seq)
         # Determine window center position
         if self.is_training:
             if item.end-self.win_len//2+1<=item.start+self.win_len//2:
@@ -96,4 +92,4 @@ class PFamDataset(Dataset):
             #start = max(0, start - item.start)
             #end = end - item.start
             
-        return win, label, item.PID, start, end, emb
+        return win, label, item.PID, start, end

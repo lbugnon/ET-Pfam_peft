@@ -62,7 +62,7 @@ class BaseModelLoRA(nn.Module):
         print("BaseModelLoRA initialized with", sum(p.numel() for p in self.parameters() if p.requires_grad), "trainable parameters. ESM2 PEFT parameters : ", 
               sum(p.numel() for p in self.emb_model.parameters() if p.requires_grad))
 
-    def forward(self, seq, start, end, emb_precomputed):
+    def forward(self, seq, start, end):
         """batch is a tuple of sequences"""  
 
         #with tr.no_grad():
@@ -106,9 +106,9 @@ class BaseModelLoRA(nn.Module):
         pred, ref, names, starts, ends  = [], [], [], [], []
         self.eval()
         
-        for seq, y, name, start, end, emb in tqdm(dataloader):
+        for seq, y, name, start, end in tqdm(dataloader):
             with tr.no_grad():
-                yhat = self(seq, start, end, emb)
+                yhat = self(seq, start, end)
                 y = y.to(self.device)
                 test_loss += self.loss(yhat, y).item()
 
