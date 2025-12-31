@@ -18,16 +18,12 @@ def predict(net, emb, window_len, use_softmax=True, step=8):
         centers: The center positions of the sliding windows.
         pred: The predictions from the model.
     """
-    L = emb.shape[1]
+    L = emb.shape[1] if type(emb) is tr.Tensor else len(emb)
+    B = emb.shape[0] if type(emb) is tr.Tensor else 1
     centers = np.arange(0, L, step)
-    batch = tr.zeros((len(centers), emb.shape[0], window_len), dtype=tr.float)
-
-    for k, center in enumerate(centers):
-        start = max(0, center-window_len//2)
-        end = min(L, center+window_len//2)
-        batch[k,:,:end-start] = emb[:, start:end].unsqueeze(0)
+    
     with tr.no_grad():
-        pred = net(batch).cpu().detach()
+        pred = net(seq, start, end).cpu().detach()
     if use_softmax:
         pred = softmax(pred, dim=1)
 

@@ -33,7 +33,7 @@ def centered_window_test(config, model, output_folder, is_ensemble=False,
 
     # Load the dataset
     data = PFamDataset(f"{data_path}{partition}.csv", emb_path, categories,
-                            win_len=win_len, is_training=False)
+                            win_len=win_len, is_training=False, sequences=config.get("sequences", None))
     loader = DataLoader(data,
                              batch_size=batch_size,
                              num_workers=config.get("nworkers", 1))

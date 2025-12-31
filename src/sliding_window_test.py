@@ -46,7 +46,7 @@ def _predict_coverage(categories, pred, start, end, gold_label):
     return [prediction, score.item(), prediction == gold_label]
 
 
-def sliding_window_test(config, model, output_path, is_ensemble=False, partition='test'):
+def sliding_window_test(config, model, output_path, is_ensemble=False, partition='test', sequences=None):
     """
     Run sliding window prediction on a test dataset and evaluate three prediction strategies:
     max score, area under curve, and coverage-based majority voting.
@@ -72,12 +72,13 @@ def sliding_window_test(config, model, output_path, is_ensemble=False, partition
     # Iterate over the proteins to make predictions with the model
     for pid in tqdm(dataset.PID.unique()):
 
+        emb = sequences[pid]
         # Load the embedding for the current PID
-        emb_file = f"{config['emb_path']}{pid}.pk"
-        if not os.path.isfile(emb_file):
-            print(f"Missing embedding: {pid}")
-            continue
-        emb = pickle.load(open(emb_file, "rb")).squeeze().float()
+        #emb_file = f"{config['emb_path']}{pid}.pk"
+        #if not os.path.isfile(emb_file):
+        #    print(f"Missing embedding: {pid}")
+        #    continue
+        #emb = pickle.load(open(emb_file, "rb")).squeeze().float()
 
         # Get the predictions from the model using the sliding window approach
         if is_ensemble:

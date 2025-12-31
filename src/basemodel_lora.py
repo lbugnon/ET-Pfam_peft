@@ -34,7 +34,7 @@ class BaseModelLoRA(nn.Module):
             #task_type="CAUSAL_LM"  # this value is ignored for some models, but keep sensible default
         )
 
-        self.emb_model = get_peft_model(self.emb_model, lora_config)
+        #self.emb_model = get_peft_model(self.emb_model, lora_config)
         
         print(self.emb_model)
         self.emb_size = emb_size 
@@ -62,12 +62,14 @@ class BaseModelLoRA(nn.Module):
         print("BaseModelLoRA initialized with", sum(p.numel() for p in self.parameters() if p.requires_grad), "trainable parameters. ESM2 PEFT parameters : ", 
               sum(p.numel() for p in self.emb_model.parameters() if p.requires_grad))
 
-    def forward(self, seq, start, end):
+    def forward(self, seq, start, end, emb_precomputed):
         """batch is a tuple of sequences"""  
 
-        _, _, tokens = self.batch_converter([(k, s) for k, s in enumerate(seq)]) # TODO this could go to collate fn
-        emb = self.emb_model(tokens.to(self.device), repr_layers=[33])["representations"][33][: ,1:-1, :].permute(0,2,1)
-        
+        with tr.no_grad():
+            _, _, tokens = self.batch_converter([(k, s) for k, s in enumerate(seq)]) # TODO this could go to collate fn
+            emb = self.emb_model(tokens.to(self.device), repr_layers=[33])["representations"][33][: ,1:-1, :].permute(0,2,1).half().float()
+
+        import ipdb; ipdb.set_trace()
         emb_win = tr.zeros((emb.shape[0], emb.shape[1], 64), dtype=tr.float).to(self.device)
         for k in range(emb.shape[0]):
             emb_win[k, :, :(end[k]-start[k])] = emb[k, :, start[k]:end[k]]
@@ -105,9 +107,9 @@ class BaseModelLoRA(nn.Module):
         pred, ref, names, starts, ends  = [], [], [], [], []
         self.eval()
         
-        for seq, y, name, start, end in tqdm(dataloader):
+        for seq, y, name, start, end, emb in tqdm(dataloader):
             with tr.no_grad():
-                yhat = self(seq, start, end)
+                yhat = self(seq, start, end, emb)
                 y = y.to(self.device)
                 test_loss += self.loss(yhat, y).item()
 

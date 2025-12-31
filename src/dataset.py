@@ -46,15 +46,18 @@ class PFamDataset(Dataset):
         item = self.dataset.iloc[item]
 
         # Load precomputed embedding or sequence
+        emb = pickle.load(open(f"{self.emb_path}{item.PID}.pk", "rb")).squeeze()
+        seq = self.sequences[item.PID]
         if self.emb_path is not None:
-            emb = pickle.load(open(f"{self.emb_path}{item.PID}.pk", "rb")).squeeze()
             L = emb.shape[1]
         else:
-            seq = self.sequences[item.PID]
             L = len(seq)
         # Determine window center position
         if self.is_training:
-            center = np.random.randint(item.start+self.win_len//2, item.end-self.win_len//2+1)
+            if item.end-self.win_len//2+1<=item.start+self.win_len//2:
+                center = item.start+self.win_len//2 
+            else:
+                center = np.random.randint(item.start+self.win_len//2, item.end-self.win_len//2+1)
         else:
             center = (item.start + item.end)//2
 
@@ -83,9 +86,10 @@ class PFamDataset(Dataset):
         else:
             # returning full seq
             #win = seq[start:end] # window seq
-            # win = seq # full seq
+            #win = seq # full seq
+            
             win = seq[item.start:item.end]  # return domain sequence
-            start = start - item.start
+            start = max(0, start - item.start)
             end = end - item.start
-
-        return win, label, item.PID, start, end
+            
+        return win, label, item.PID, start, end, emb
