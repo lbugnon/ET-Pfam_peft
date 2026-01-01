@@ -9,10 +9,12 @@ class BaseModelLoRA(nn.Module):
     """
     Finetuning ESM2 with LoRA + convolutional neural network with residual layers for protein family classification.
     """
-    def __init__(self, nclasses, emb_size=1280, lr=1e-3, device="cuda", 
-                 logger=None, filters=1100, kernel_size=9, num_layers=5, 
-                 first_dilated_layer=2, dilation_rate=3, resnet_bottleneck_factor=.5):
+    def __init__(self, nclasses, emb_size=1280, lr=1e-3, device="cuda",
+                 logger=None, filters=1100, kernel_size=9, num_layers=5,
+                 first_dilated_layer=2, dilation_rate=3, resnet_bottleneck_factor=.5,
+                 windows_per_sequence=1):
         super().__init__()
+        self.windows_per_sequence = windows_per_sequence
 
         self.emb_model, alphabet = tr.hub.load("facebookresearch/esm:main",
                               "esm2_t33_650M_UR50D")
@@ -66,20 +68,76 @@ class BaseModelLoRA(nn.Module):
         print("BaseModelLoRA initialized with", sum(p.numel() for p in self.parameters() if p.requires_grad), "trainable parameters. ESM2 PEFT parameters : ", 
               sum(p.numel() for p in self.emb_model.parameters() if p.requires_grad))
 
-    def forward(self, seq, start, end):
-        """batch is a tuple of sequences"""  
+    def forward(self, seq, start, end, is_training=True):
+        """
+        Forward pass with optional multi-window sampling.
 
-        #with tr.no_grad():
-        _, _, tokens = self.batch_converter([(k, s) for k, s in enumerate(seq)]) # TODO this could go to collate fn
-        emb = self.emb_model(tokens.to(self.device), repr_layers=[33])["representations"][33][: ,1:-1, :].permute(0,2,1)#.half().float()
+        Args:
+            seq: List of sequences (batch_size)
+            start: Window start positions from dataset
+            end: Window end positions from dataset
+            is_training: If True, sample multiple windows; else single centered window
+        """
+        # Step 1: Process full sequences through ESM2 (unchanged)
+        _, _, tokens = self.batch_converter([(k, s) for k, s in enumerate(seq)])
+        emb = self.emb_model(tokens.to(self.device), repr_layers=[33])["representations"][33][:, 1:-1, :].permute(0,2,1)
+        # emb shape: [batch_size, 1280, seq_len]
 
-        emb_win = tr.zeros((emb.shape[0], emb.shape[1], 64), dtype=tr.float).to(self.device)
-        for k in range(emb.shape[0]):
-            emb_win[k, :, :(end[k]-start[k])] = emb[k, :, start[k]:end[k]]
+        batch_size = emb.shape[0]
+        window_len = 64  # TODO: Make this configurable via self.window_len
+        window_half = window_len // 2
 
+        if is_training and self.windows_per_sequence > 1:
+            # MULTI-WINDOW SAMPLING FOR TRAINING
+            all_windows = []
 
-        y = self.cnn(emb_win)
-        y = self.fc(y.squeeze(2))
+            for k in range(batch_size):
+                seq_emb = emb[k]  # [1280, seq_len]
+                seq_len = seq_emb.shape[1]
+
+                # Sample N random window centers within domain region
+                min_center = max(window_half, start[k].item())
+                max_center = min(seq_len - window_half, end[k].item())
+
+                if max_center <= min_center:
+                    # Domain too small: use centered window repeated N times
+                    center = (start[k].item() + end[k].item()) // 2
+                    centers = [center] * self.windows_per_sequence
+                else:
+                    # Random sampling within domain boundaries
+                    centers = tr.randint(min_center, max_center + 1, (self.windows_per_sequence,)).tolist()
+
+                # Extract windows
+                for center in centers:
+                    win_start = max(0, center - window_half)
+                    win_end = min(seq_len, center + window_half)
+
+                    # Zero-padded window of length 64
+                    win = tr.zeros((1280, window_len), dtype=tr.float, device=self.device)
+                    actual_len = min(win_end - win_start, window_len)
+                    win[:, :actual_len] = seq_emb[:, win_start:win_start + actual_len]
+                    all_windows.append(win)
+
+            # Stack all windows: [batch_size * N, 1280, 64]
+            emb_win = tr.stack(all_windows)
+
+            # Forward through CNN + FC
+            y = self.cnn(emb_win)  # [batch_size * N, filters, 1]
+            y = self.fc(y.squeeze(2))  # [batch_size * N, n_classes]
+
+            # Pool predictions: [batch_size, N, n_classes] -> [batch_size, n_classes]
+            y = y.view(batch_size, self.windows_per_sequence, -1).mean(dim=1)
+
+        else:
+            # SINGLE WINDOW FOR VALIDATION/TEST (current behavior)
+            emb_win = tr.zeros((batch_size, emb.shape[1], window_len), dtype=tr.float, device=self.device)
+            for k in range(batch_size):
+                actual_len = min(end[k].item() - start[k].item(), window_len)
+                emb_win[k, :, :actual_len] = emb[k, :, start[k]:start[k] + actual_len]
+
+            y = self.cnn(emb_win)
+            y = self.fc(y.squeeze(2))
+
         return y
 
     def fit(self, dataloader):
@@ -91,7 +149,7 @@ class BaseModelLoRA(nn.Module):
         self.fc.train()
         self.optim.zero_grad()
         for k,(x, y, _, start, end) in enumerate(tqdm(dataloader)):
-            yhat = self(x, start, end)
+            yhat = self(x, start, end, is_training=True)
             y = y.to(self.device)
 
             loss = self.loss(yhat, y)
@@ -122,7 +180,7 @@ class BaseModelLoRA(nn.Module):
         
         for seq, y, name, start, end in tqdm(dataloader):
             with tr.no_grad():
-                yhat = self(seq, start, end)
+                yhat = self(seq, start, end, is_training=False)
                 y = y.to(self.device)
                 test_loss += self.loss(yhat, y).item()
 

@@ -38,7 +38,8 @@ def train(config, categories, output_folder):
                             num_workers=config['nworkers'])
 
     # Initialize the model
-    net = BaseModel(len(categories), lr=config['lr'], device=config['device'])
+    net = BaseModel(len(categories), lr=config['lr'], device=config['device'],
+                    windows_per_sequence=config.get('windows_per_sequence', 1))
 
     # Check if a previous model exists
     if os.path.exists(filename):

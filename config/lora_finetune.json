@@ -1,7 +1,8 @@
 {
     "window_len": 64,
+    "windows_per_sequence": 50,
     "lr": 1e-04,
-    "batch_size": 2,
+    "batch_size": 1,
     "nepoch": 500,
     "patience": 10,
     "step": 4,
