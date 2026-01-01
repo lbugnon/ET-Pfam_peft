@@ -24,10 +24,10 @@ def train(config, categories, output_folder):
     # Load training and validation datasets
     train_data = PFamDataset(f"{config['data_path']}train.csv", config['emb_path'] if config.get('use_embeddings', True) else None,
                             categories, win_len=config['window_len'],
-                            is_training=True, sequences=f"{config['data_path']}train.fasta", debug=True)
+                            is_training=True, sequences=f"{config['data_path']}train.fasta", debug=False)
     dev_data = PFamDataset(f"{config['data_path']}dev.csv", config['emb_path'] if config.get('use_embeddings', True) else None,
                         categories, win_len=config['window_len'],
-                        is_training=False, sequences=f"{config['data_path']}dev.fasta", debug=True)
+                        is_training=False, sequences=f"{config['data_path']}dev.fasta", debug=False)
 
     print("train", len(train_data), "dev", len(dev_data))
 

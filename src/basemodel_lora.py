@@ -53,8 +53,12 @@ class BaseModelLoRA(nn.Module):
         self.fc = nn.Linear(filters, nclasses) 
 
         self.loss = nn.CrossEntropyLoss()
-        self.optim = tr.optim.Adam([{"params": self.cnn.parameters(), "lr": lr},
-                                    {"params": self.fc.parameters(), "lr": lr}])
+        # Include ESM2 LoRA parameters in optimizer with higher learning rate
+        self.optim = tr.optim.AdamW([
+            {"params": self.emb_model.parameters(), "lr": lr, "weight_decay": 0.0},  
+            {"params": self.cnn.parameters(), "lr": lr * 5, "weight_decay": 0.01},       
+            {"params": self.fc.parameters(), "lr": lr * 5, "weight_decay": 0.01}         
+        ])
 
         self.to(device)
         self.device = device
@@ -81,7 +85,10 @@ class BaseModelLoRA(nn.Module):
     def fit(self, dataloader):
 
         avg_loss = 0
-        self.cnn.train(), self.fc.train()
+        # Set all components to training mode
+        self.emb_model.train()
+        self.cnn.train()
+        self.fc.train()
         self.optim.zero_grad()
         for k,(x, y, _, start, end) in enumerate(tqdm(dataloader)):
             yhat = self(x, start, end)
@@ -89,6 +96,10 @@ class BaseModelLoRA(nn.Module):
 
             loss = self.loss(yhat, y)
             loss.backward()
+
+            # Add gradient clipping to prevent exploding gradients
+            tr.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+
             avg_loss += loss.item()
             self.optim.step()
             self.optim.zero_grad()
@@ -104,7 +115,10 @@ class BaseModelLoRA(nn.Module):
     def pred(self, dataloader):
         test_loss = 0
         pred, ref, names, starts, ends  = [], [], [], [], []
-        self.eval()
+        # Set all components to evaluation mode
+        self.emb_model.eval()
+        self.cnn.eval()
+        self.fc.eval()
         
         for seq, y, name, start, end in tqdm(dataloader):
             with tr.no_grad():
