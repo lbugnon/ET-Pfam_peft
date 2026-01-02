@@ -6,5 +6,6 @@
     "patience": 10,
     "step": 4,
     "soft_max": false,
-    "dataset": "mini"
+    "dataset": "mini",
+    "train_fraction": 1.0
 }

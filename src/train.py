@@ -3,7 +3,7 @@ import sys
 import time
 import torch as tr
 import torch.multiprocessing
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, SubsetRandomSampler
 from src.dataset import PFamDataset
 #from src.basemodel import BaseModel as BaseModel # TODO fix from the config
 from src.basemodel_lora import BaseModelLoRA as BaseModel
@@ -29,11 +29,17 @@ def train(config, categories, output_folder):
                         categories, win_len=config['window_len'],
                         is_training=False, sequences=f"{config['data_path']}dev.fasta")
 
-    print("train", len(train_data), "dev", len(dev_data))
+    # Get train_fraction parameter (default to 1.0 for backward compatibility)
+    train_fraction = config.get('train_fraction', 1.0)
+    use_sampling = train_fraction < 1.0
 
-    # Create data loaders for training and validation datasets
-    train_loader = DataLoader(train_data, batch_size=config['batch_size'],
-                            shuffle=True, num_workers=config['nworkers'])
+    if use_sampling:
+        num_train_samples = int(len(train_data) * train_fraction)
+        print(f"train {len(train_data)} (using {num_train_samples} samples per epoch, {train_fraction*100:.1f}%), dev {len(dev_data)}")
+    else:
+        print("train", len(train_data), "dev", len(dev_data))
+
+    # Create validation data loader (fixed across epochs)
     dev_loader = DataLoader(dev_data, batch_size=config['batch_size'],
                             num_workers=config['nworkers'])
 
@@ -74,6 +80,19 @@ def train(config, categories, output_folder):
     # Training loop
     for epoch in range(INIT_EP, config['nepoch']):
         start_time = time.time()
+
+        # Create train loader (with sampling if enabled)
+        if use_sampling:
+            # Generate random indices for this epoch
+            indices = tr.randperm(len(train_data))[:num_train_samples].tolist()
+            sampler = SubsetRandomSampler(indices)
+            train_loader = DataLoader(train_data, batch_size=config['batch_size'],
+                                    sampler=sampler, num_workers=config['nworkers'])
+        else:
+            # Create loader once if not using sampling
+            if epoch == INIT_EP:
+                train_loader = DataLoader(train_data, batch_size=config['batch_size'],
+                                        shuffle=True, num_workers=config['nworkers'])
 
         train_loss = net.fit(train_loader)
         dev_loss, dev_err, *_ = net.pred(dev_loader)

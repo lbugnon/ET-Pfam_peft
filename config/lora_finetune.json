@@ -7,5 +7,6 @@
     "step": 4,
     "soft_max": false,
     "use_embeddings": false,
-    "dataset": "full"
+    "dataset": "full",
+    "train_fraction": 1.0
 }
