@@ -11,7 +11,7 @@ class PFamDataset(Dataset):
     Proteins have precomputed per-residue embeddings.
     """
     def __init__(self, dataset_path, emb_path, categories, win_len,
-                 debug=False, is_training=False, sequences=None):
+                 debug=True, is_training=False, sequences=None):
         """
         Initialize the PFamDataset.
         Args:
