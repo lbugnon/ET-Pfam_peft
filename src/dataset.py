@@ -11,7 +11,7 @@ class PFamDataset(Dataset):
     Proteins have precomputed per-residue embeddings.
     """
     def __init__(self, dataset_path, emb_path, categories, win_len,
-                 debug=True, is_training=False, sequences=None):
+                 debug=False, is_training=False, sequences=None):
         """
         Initialize the PFamDataset.
         Args:
@@ -34,6 +34,11 @@ class PFamDataset(Dataset):
         if debug:
             self.dataset = self.dataset.sample(n=15)
 
+        # rename columns, Fin -> end, Inicio -> start
+        if 'Fin' in self.dataset.columns and 'Inicio' in self.dataset.columns:
+            self.dataset = self.dataset.rename(columns={'Fin': 'end', 'Inicio': 'start'})
+        
+
     def __len__(self):
         return len(self.dataset)
 
@@ -44,7 +49,7 @@ class PFamDataset(Dataset):
     def __getitem__(self, item):
         """Sample one random window from a domain entry"""
         item = self.dataset.iloc[item]
-
+        
         # Load precomputed embedding or sequence
         seq = self.sequences[item.PID]
         L = len(seq)
