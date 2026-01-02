@@ -34,7 +34,7 @@ if __name__ == "__main__":
 
     # Load the configuration
     config = load_config(config_path)
-    #config["emb_path"] = None
+    config["emb_path"] = None
     config["sequences"] = f"{config['data_path']}test.fasta"
 
     categories = [line.strip() for line in open(f"{config['data_path']}categories.txt")]
@@ -45,11 +45,11 @@ if __name__ == "__main__":
     state_dict = tr.load(f"{output_path}/weights.pk")
     # ====
     # Load full pretrained
-    #model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict)
     
     # Fix to load pretrained model without esm weights
-    model.cnn.load_state_dict({k.replace("cnn.", ""): state_dict[k] for k in state_dict if "cnn" in k})
-    model.fc.load_state_dict({k.replace("fc.", ""): state_dict[k] for k in state_dict if "fc" in k})
+    #model.cnn.load_state_dict({k.replace("cnn.", ""): state_dict[k] for k in state_dict if "cnn" in k})
+    #model.fc.load_state_dict({k.replace("fc.", ""): state_dict[k] for k in state_dict if "fc" in k})
     # ====
 
     model.eval()
