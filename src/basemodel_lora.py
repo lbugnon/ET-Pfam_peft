@@ -7,36 +7,43 @@ from peft import LoraConfig, get_peft_model
 
 class BaseModelLoRA(nn.Module): 
     """
-    Finetuning ESM2 with LoRA + convolutional neural network with residual layers for protein family classification.
+    ESM2 (with or without LoRA) + convolutional neural network with residual layers for protein family classification.
     """
     def __init__(self, nclasses, emb_size=1280, lr=1e-3, device="cuda", 
                  logger=None, filters=1100, kernel_size=9, num_layers=5, 
-                 first_dilated_layer=2, dilation_rate=3, resnet_bottleneck_factor=.5):
+                 first_dilated_layer=2, dilation_rate=3, resnet_bottleneck_factor=.5, use_lora=True):
         super().__init__()
 
+        self.use_lora = use_lora
         self.emb_model, alphabet = tr.hub.load("facebookresearch/esm:main",
                               "esm2_t33_650M_UR50D")
         self.batch_converter = alphabet.get_batch_converter()
 
-        # TODO these goes to config
-        # finetune all layers
-        target_layers = []
-        for name, module in self.emb_model.named_modules():
-            if isinstance(module, tr.nn.Linear):
-                target_layers.append(name)
+        if use_lora:
+            # TODO these goes to config
+            # finetune all layers
+            target_layers = []
+            for name, module in self.emb_model.named_modules():
+                if isinstance(module, tr.nn.Linear):
+                    target_layers.append(name)
 
-        lora_config = LoraConfig(
-            r=8,                 # low-rank
-            lora_alpha=32,
-            target_modules=target_layers, 
-            lora_dropout=0.05,
-            bias="none",
-            #task_type="CAUSAL_LM"  # this value is ignored for some models, but keep sensible default
-        )
+            lora_config = LoraConfig(
+                r=8,                 # low-rank
+                lora_alpha=32,
+                target_modules=target_layers, 
+                lora_dropout=0.05,
+                bias="none",
+                #task_type="CAUSAL_LM"  # this value is ignored for some models, but keep sensible default
+            )
 
-        self.emb_model = get_peft_model(self.emb_model, lora_config)
+            self.emb_model = get_peft_model(self.emb_model, lora_config)
+            print(self.emb_model)
+        else:
+            # Freeze ESM2 parameters when not using LoRA
+            for param in self.emb_model.parameters():
+                param.requires_grad = False
+            print("ESM2 loaded without LoRA (frozen)")
         
-        print(self.emb_model)
         self.emb_size = emb_size 
 
         self.logger = logger
@@ -53,12 +60,20 @@ class BaseModelLoRA(nn.Module):
         self.fc = nn.Linear(filters, nclasses) 
 
         self.loss = nn.CrossEntropyLoss()
-        # Include ESM2 LoRA parameters in optimizer with higher learning rate
-        self.optim = tr.optim.AdamW([
-            {"params": self.emb_model.parameters(), "lr": lr, "weight_decay": 0.0},  
-            {"params": self.cnn.parameters(), "lr": lr * 5, "weight_decay": 0.01},       
-            {"params": self.fc.parameters(), "lr": lr * 5, "weight_decay": 0.01}         
-        ])
+        # Configure optimizer based on LoRA usage
+        if use_lora:
+            # Include ESM2 LoRA parameters in optimizer with higher learning rate
+            self.optim = tr.optim.AdamW([
+                {"params": self.emb_model.parameters(), "lr": lr, "weight_decay": 0.0},  
+                {"params": self.cnn.parameters(), "lr": lr * 5, "weight_decay": 0.01},       
+                {"params": self.fc.parameters(), "lr": lr * 5, "weight_decay": 0.01}         
+            ])
+        else:
+            # Only optimize CNN and FC when ESM2 is frozen
+            self.optim = tr.optim.AdamW([
+                {"params": self.cnn.parameters(), "lr": lr, "weight_decay": 0.01},       
+                {"params": self.fc.parameters(), "lr": lr, "weight_decay": 0.01}         
+            ])
 
         self.to(device)
         self.device = device
@@ -66,21 +81,70 @@ class BaseModelLoRA(nn.Module):
         print("BaseModelLoRA initialized with", sum(p.numel() for p in self.parameters() if p.requires_grad), "trainable parameters. ESM2 PEFT parameters : ", 
               sum(p.numel() for p in self.emb_model.parameters() if p.requires_grad))
 
-    def forward(self, seq, start, end):
-        """batch is a tuple of sequences"""  
+    def _compute_embeddings_batch(self, seq_list):
+        """Compute ESM2 embeddings for a batch of sequences.
+        Args:
+            seq_list: List of sequences (strings)
+        Returns:
+            Embeddings tensor of shape [batch_size, emb_size, seq_len]
+        """
+        _, _, tokens = self.batch_converter([(k, s) for k, s in enumerate(seq_list)])
+        
+        if self.use_lora:
+            # When using LoRA, compute gradients through ESM2
+            emb = self.emb_model(tokens.to(self.device), repr_layers=[33])["representations"][33][:, 1:-1, :].permute(0, 2, 1)
+        else:
+            # When not using LoRA, freeze ESM2
+            with tr.no_grad():
+                emb = self.emb_model(tokens.to(self.device), repr_layers=[33])["representations"][33][:, 1:-1, :].permute(0, 2, 1)
+        
+        return emb
 
-        #with tr.no_grad():
-        _, _, tokens = self.batch_converter([(k, s) for k, s in enumerate(seq)]) # TODO this could go to collate fn
-        emb = self.emb_model(tokens.to(self.device), repr_layers=[33])["representations"][33][: ,1:-1, :].permute(0,2,1)#.half().float()
+    def compute_embeddings(self, seq):
+        """Compute ESM2 embeddings for a single sequence.
+        Args:
+            seq: Single sequence (string)
+        Returns:
+            Embeddings tensor of shape [emb_size, seq_len]
+        """
+        emb = self._compute_embeddings_batch([seq])
+        return emb.squeeze(0)
 
-        emb_win = tr.zeros((emb.shape[0], emb.shape[1], 64), dtype=tr.float).to(self.device)
-        for k in range(emb.shape[0]):
-            emb_win[k, :, :(end[k]-start[k])] = emb[k, :, start[k]:end[k]]
-
-
+    def forward_from_embeddings(self, emb, start, end):
+        """Forward pass using pre-computed embeddings.
+        Args:
+            emb: Pre-computed embeddings of shape [emb_size, seq_len] or [batch_size, emb_size, seq_len]
+            start: List of start positions
+            end: List of end positions
+        Returns:
+            Predictions tensor
+        """
+        # Handle both single embedding and batch
+        if emb.dim() == 2:
+            emb = emb.unsqueeze(0)  # Add batch dimension
+            batch_size = 1
+        else:
+            batch_size = emb.shape[0]
+        
+        emb_win = tr.zeros((batch_size, emb.shape[1], 64), dtype=tr.float).to(self.device)
+        
+        for k in range(batch_size):
+            window_len = end[k] - start[k]
+            emb_win[k, :, :window_len] = emb[k, :, start[k]:end[k]]
+        
         y = self.cnn(emb_win)
         y = self.fc(y.squeeze(2))
         return y
+
+    def forward(self, seq, start, end):
+        """Forward pass computing embeddings and predictions.
+        Args:
+            seq: List of sequences (strings)
+            start: List of start positions
+            end: List of end positions
+        """
+        emb = self._compute_embeddings_batch(seq)
+        return self.forward_from_embeddings(emb, start, end)
 
     def fit(self, dataloader):
 

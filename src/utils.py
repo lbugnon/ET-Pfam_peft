@@ -5,25 +5,41 @@ import numpy as np
 import torch as tr
 from torch.nn.functional import softmax
 
-def predict(net, emb, window_len, use_softmax=True, step=8):
+def predict(net, seq, window_len, use_softmax=True, step=8):
     """
-    Predicts using a sliding window on the given embeddings.
+    Predicts using a sliding window on the given sequence.
     Args:
-        net: BaseModel or Ensemble Model.
-        emb: The input embeddings of shape (batch_size, sequence_length).
+        net: BaseModel or BaseModelLoRA.
+        seq: The input sequence (string).
         window_len: The length of the sliding window.
         use_softmax: Whether to apply softmax to the predictions.
         step: Step size for the sliding window.
     Returns:
         centers: The center positions of the sliding windows.
-        pred: The predictions from the model.
+        pred: The predictions from the model (num_windows x num_classes).
     """
-    L = emb.shape[1] if type(emb) is tr.Tensor else len(emb)
-    B = emb.shape[0] if type(emb) is tr.Tensor else 1
+    L = len(seq)
     centers = np.arange(0, L, step)
     
+    # Compute embeddings once for the entire sequence
     with tr.no_grad():
-        pred = net(seq, start, end).cpu().detach()
+        emb = net.compute_embeddings(seq)
+    
+    predictions = []
+    with tr.no_grad():
+        for center in centers:
+            start_pos = max(0, center - window_len // 2)
+            end_pos = min(L, start_pos + window_len)
+            # Adjust if we're at the end of the sequence
+            if end_pos - start_pos < window_len:
+                start_pos = max(0, end_pos - window_len)
+            
+            # Use pre-computed embeddings for efficiency
+            pred = net.forward_from_embeddings(emb, [start_pos], [end_pos]).cpu().detach()
+            predictions.append(pred)
+    
+    pred = tr.cat(predictions, dim=0)
+    
     if use_softmax:
         pred = softmax(pred, dim=1)
 

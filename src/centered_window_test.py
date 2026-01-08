@@ -31,15 +31,15 @@ def centered_window_test(config, model, output_folder, is_ensemble=False,
     else:
         win_len, batch_size = config.get("window_len", 32), config.get("batch_size", 32)
 
+    print(win_len, batch_size)
     # Load the dataset
     data = PFamDataset(f"{data_path}{partition}.csv", emb_path, categories,
                             win_len=win_len, is_training=False, sequences=config.get("sequences", None))
     loader = DataLoader(data,
                              batch_size=batch_size,
-                             num_workers=config.get("nworkers", 1))
+                             num_workers=config.get("nworkers", 4))
 
     model.eval()
-
     if is_ensemble:
         # Get the ensemble predictions
         _, pred_bin = model.pred(partition=partition)
