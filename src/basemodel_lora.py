@@ -11,10 +11,12 @@ class BaseModelLoRA(nn.Module):
     """
     def __init__(self, nclasses, emb_size=1280, lr=1e-3, device="cuda", 
                  logger=None, filters=1100, kernel_size=9, num_layers=5, 
-                 first_dilated_layer=2, dilation_rate=3, resnet_bottleneck_factor=.5, use_lora=True):
+                 first_dilated_layer=2, dilation_rate=3, resnet_bottleneck_factor=.5, use_lora=True,
+                 freeze_cnn_fc=False):
         super().__init__()
 
         self.use_lora = use_lora
+        self.freeze_cnn_fc = freeze_cnn_fc
         self.emb_model, alphabet = tr.hub.load("facebookresearch/esm:main",
                               "esm2_t33_650M_UR50D")
         self.batch_converter = alphabet.get_batch_converter()
@@ -60,14 +62,20 @@ class BaseModelLoRA(nn.Module):
         self.fc = nn.Linear(filters, nclasses) 
 
         self.loss = nn.CrossEntropyLoss()
-        # Configure optimizer based on LoRA usage
+        # Configure optimizer based on LoRA usage and frozen components
         if use_lora:
-            # Include ESM2 LoRA parameters in optimizer with higher learning rate
-            self.optim = tr.optim.AdamW([
-                {"params": self.emb_model.parameters(), "lr": lr, "weight_decay": 0.0},  
-                {"params": self.cnn.parameters(), "lr": lr * 5, "weight_decay": 0.01},       
-                {"params": self.fc.parameters(), "lr": lr * 5, "weight_decay": 0.01}         
-            ])
+            if freeze_cnn_fc:
+                # Only optimize ESM2 LoRA parameters when CNN/FC are frozen
+                self.optim = tr.optim.AdamW([
+                    {"params": self.emb_model.parameters(), "lr": lr, "weight_decay": 0.0}
+                ])
+            else:
+                # Include ESM2 LoRA parameters + CNN/FC in optimizer
+                self.optim = tr.optim.AdamW([
+                    {"params": self.emb_model.parameters(), "lr": lr, "weight_decay": 0.0},  
+                    {"params": self.cnn.parameters(), "lr": lr * 5, "weight_decay": 0.01},       
+                    {"params": self.fc.parameters(), "lr": lr * 5, "weight_decay": 0.01}         
+                ])
         else:
             # Only optimize CNN and FC when ESM2 is frozen
             self.optim = tr.optim.AdamW([
@@ -80,6 +88,56 @@ class BaseModelLoRA(nn.Module):
 
         print("BaseModelLoRA initialized with", sum(p.numel() for p in self.parameters() if p.requires_grad), "trainable parameters. ESM2 PEFT parameters : ", 
               sum(p.numel() for p in self.emb_model.parameters() if p.requires_grad))
+
+    def load_cnn_fc_weights(self, pretrained_weights_path):
+        """
+        Load pretrained CNN and FC weights from a checkpoint.
+        Weights are loaded but parameters remain trainable unless explicitly frozen.
+        
+        Args:
+            pretrained_weights_path: Path to the pretrained model weights (.pk file)
+        """
+        print(f"Loading CNN/FC weights from {pretrained_weights_path}")
+        
+        # Load the pretrained state dict
+        pretrained_state = tr.load(pretrained_weights_path, map_location=self.device)
+        
+        # Extract only CNN and FC parameters
+        cnn_fc_state = {}
+        for key, value in pretrained_state.items():
+            if key.startswith('cnn.') or key.startswith('fc.'):
+                cnn_fc_state[key] = value
+        
+        # Load the CNN and FC weights
+        self.load_state_dict(cnn_fc_state, strict=False)
+        
+        print(f"Loaded {sum(p.numel() for p in self.cnn.parameters())} CNN parameters and {sum(p.numel() for p in self.fc.parameters())} FC parameters")
+    
+    def freeze_cnn_params(self):
+        """
+        Freeze CNN parameters, making them non-trainable.
+        """
+        for param in self.cnn.parameters():
+            param.requires_grad = False
+        print(f"Froze {sum(p.numel() for p in self.cnn.parameters())} CNN parameters")
+    
+    def freeze_fc_params(self):
+        """
+        Freeze FC parameters, making them non-trainable.
+        """
+        for param in self.fc.parameters():
+            param.requires_grad = False
+        print(f"Froze {sum(p.numel() for p in self.fc.parameters())} FC parameters")
+    
+    def freeze_cnn_fc_params(self):
+        """
+        Freeze both CNN and FC parameters, making them non-trainable.
+        Useful for finetuning only ESM2 with LoRA.
+        """
+        self.freeze_cnn_params()
+        self.freeze_fc_params()
+        print(f"Total trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad)}")
+        print(f"Total trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad)}")
 
     def _compute_embeddings_batch(self, seq_list):
         """Compute ESM2 embeddings for a batch of sequences.

@@ -1,0 +1,13 @@
+{
+    "window_len": 64,
+    "lr": 2e-04,
+    "batch_size": 4,
+    "nepoch": 100,
+    "patience": 10,
+    "step": 4,
+    "soft_max": false,
+    "use_embeddings": false,
+    "dataset": "mini",
+    "train_fraction": 0.2,
+    "comment": "ESM2-only LoRA finetuning with frozen pretrained CNN/FC. Higher LR since we're only training LoRA adapters. Increased batch size for faster training."
+}

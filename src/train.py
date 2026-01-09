@@ -45,6 +45,16 @@ def train(config, categories, output_folder):
 
     # Initialize the model
     net = BaseModel(len(categories), lr=config['lr'], device=config['device'])
+    
+    # Load pretrained weights if specified
+    if config.get('pretrained_path'):
+        net.load_cnn_fc_weights(config['pretrained_path'])
+        
+        # Freeze parameters if specified
+        if config.get('freeze_cnn'):
+            net.freeze_cnn_params()
+        if config.get('freeze_fc'):
+            net.freeze_fc_params()
 
     # Check if a previous model exists
     if os.path.exists(filename):
