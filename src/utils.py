@@ -5,7 +5,7 @@ import numpy as np
 import torch as tr
 from torch.nn.functional import softmax
 
-def predict(net, seq, window_len, use_softmax=True, step=8):
+def predict(net, seq, window_len, use_softmax=True, step=8, max_context=150):
     """
     Predicts using a sliding window on the given sequence.
     Args:
@@ -14,16 +14,13 @@ def predict(net, seq, window_len, use_softmax=True, step=8):
         window_len: The length of the sliding window.
         use_softmax: Whether to apply softmax to the predictions.
         step: Step size for the sliding window.
+        max_context: Maximum context around window center (default 150 for 300 total)
     Returns:
         centers: The center positions of the sliding windows.
         pred: The predictions from the model (num_windows x num_classes).
     """
     L = len(seq)
     centers = np.arange(0, L, step)
-    
-    # Compute embeddings once for the entire sequence
-    with tr.no_grad():
-        emb = net.compute_embeddings(seq)
     
     predictions = []
     with tr.no_grad():
@@ -34,8 +31,16 @@ def predict(net, seq, window_len, use_softmax=True, step=8):
             if end_pos - start_pos < window_len:
                 start_pos = max(0, end_pos - window_len)
             
-            # Use pre-computed embeddings for efficiency
-            pred = net.forward_from_embeddings(emb, [start_pos], [end_pos]).cpu().detach()
+            # Crop sequence to max 300 residues around center
+            crop_start = max(0, center - max_context)
+            crop_end = min(L, center + max_context)
+            cropped_seq = seq[crop_start:crop_end]
+            
+            # Adjust positions relative to cropped sequence
+            local_start = start_pos - crop_start
+            local_end = end_pos - crop_start
+            
+            pred = net([cropped_seq], [local_start], [local_end]).cpu().detach()
             predictions.append(pred)
     
     pred = tr.cat(predictions, dim=0)

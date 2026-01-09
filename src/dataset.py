@@ -80,15 +80,14 @@ class PFamDataset(Dataset):
             ind = tr.where(label==0)[0]
             label[ind] = (1-s)/len(ind)
         
-        # window seq (this has very low context and do not work well)
-        # win = seq[start:end] 
+        # Crop sequence to max 300 residues around window center (150 on each side)
+        max_context = 150
+        crop_start = max(0, center - max_context)
+        crop_end = min(L, center + max_context)
+        win = seq[crop_start:crop_end]
         
-        # returning full seq (this should replicate baseline usage of embeddings)
-        win = seq 
-        
-        # return domain sequence (not valid in test)
-        #win = seq[item.start:item.end]  
-        #start = max(0, start - item.start)
-        #end = end - item.start
+        # Adjust start/end positions relative to cropped sequence
+        start = start - crop_start
+        end = end - crop_start
         
         return win, label, item.PID, start, end
