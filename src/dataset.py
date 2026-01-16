@@ -80,14 +80,16 @@ class PFamDataset(Dataset):
             ind = tr.where(label==0)[0]
             label[ind] = (1-s)/len(ind)
         
+        win = seq
+        
         # Crop sequence to max 300 residues around window center (150 on each side)
-        max_context = 150
-        crop_start = max(0, center - max_context)
-        crop_end = min(L, center + max_context)
-        win = seq[crop_start:crop_end]
+        #max_context = 150
+        #crop_start = max(0, center - max_context)
+        #crop_end = min(L, center + max_context)
+        # win = seq[crop_start:crop_end]
         
         # Adjust start/end positions relative to cropped sequence
-        start = start - crop_start
-        end = end - crop_start
+        #start = start - crop_start
+        #end = end - crop_start
         
         return win, label, item.PID, start, end

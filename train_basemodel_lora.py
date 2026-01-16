@@ -46,6 +46,8 @@ def parser():
                         help="Freeze FC parameters (requires --pretrained_path).")
     parser.add_argument("--freeze_cnn_fc", action="store_true",
                         help="Freeze both CNN and FC parameters (requires --pretrained_path).")
+    parser.add_argument("--debug", action="store_true",
+                        help="Debug mode: limit validation to 100 sequences for faster iteration.")
 
     args = parser.parse_args()
 
@@ -73,6 +75,8 @@ if __name__ == "__main__":
     config['pretrained_path'] = args.pretrained_path
     config['freeze_cnn'] = args.freeze_cnn 
     config['freeze_fc'] = args.freeze_fc 
+    config['freeze_cnn_fc'] = args.freeze_cnn_fc
+    config['debug'] = args.debug 
      
     categories = [line.strip() for line in open(f"{config['data_path']}categories.txt")]
 

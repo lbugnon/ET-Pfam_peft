@@ -28,6 +28,11 @@ def train(config, categories, output_folder):
     dev_data = PFamDataset(f"{config['data_path']}dev.csv", config['emb_path'] if config.get('use_embeddings', True) else None,
                         categories, win_len=config['window_len'],
                         is_training=False, sequences=f"{config['data_path']}dev.fasta")
+    
+    # Limit validation set in debug mode
+    if config.get('debug', False):
+        dev_data.dataset = dev_data.dataset.head(100)
+        print(f"DEBUG MODE: Validation limited to {len(dev_data)} sequences")
 
     # Get train_fraction parameter (default to 1.0 for backward compatibility)
     train_fraction = config.get('train_fraction', 1.0)
@@ -44,7 +49,14 @@ def train(config, categories, output_folder):
                             num_workers=config['nworkers'])
 
     # Initialize the model
-    net = BaseModel(len(categories), lr=config['lr'], device=config['device'])
+    net = BaseModel(
+        len(categories),
+        lr_lora=config['lr_lora'],
+        lr_cnn=config['lr_cnn'],
+        lr_fc=config['lr_fc'],
+        device=config['device'],
+        freeze_cnn_fc=config.get('freeze_cnn_fc', False)
+    )
     
     # Load pretrained weights if specified
     if config.get('pretrained_path'):
@@ -55,6 +67,8 @@ def train(config, categories, output_folder):
             net.freeze_cnn_params()
         if config.get('freeze_fc'):
             net.freeze_fc_params()
+        if config.get('freeze_cnn_fc'):
+            net.freeze_cnn_fc_params()
 
     # Check if a previous model exists
     if os.path.exists(filename):

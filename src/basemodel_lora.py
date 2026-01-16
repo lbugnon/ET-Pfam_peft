@@ -9,7 +9,7 @@ class BaseModelLoRA(nn.Module):
     """
     ESM2 (with or without LoRA) + convolutional neural network with residual layers for protein family classification.
     """
-    def __init__(self, nclasses, emb_size=1280, lr=1e-3, device="cuda", 
+    def __init__(self, nclasses, lr_lora, lr_cnn, lr_fc, emb_size=1280,  device="cuda", 
                  logger=None, filters=1100, kernel_size=9, num_layers=5, 
                  first_dilated_layer=2, dilation_rate=3, resnet_bottleneck_factor=.5, use_lora=True,
                  freeze_cnn_fc=False):
@@ -22,7 +22,6 @@ class BaseModelLoRA(nn.Module):
         self.batch_converter = alphabet.get_batch_converter()
 
         if use_lora:
-            # TODO these goes to config
             # finetune all layers
             target_layers = []
             for name, module in self.emb_model.named_modules():
@@ -67,20 +66,20 @@ class BaseModelLoRA(nn.Module):
             if freeze_cnn_fc:
                 # Only optimize ESM2 LoRA parameters when CNN/FC are frozen
                 self.optim = tr.optim.AdamW([
-                    {"params": self.emb_model.parameters(), "lr": lr, "weight_decay": 0.0}
+                    {"params": self.emb_model.parameters(), "lr": lr_lora, "weight_decay": 0.0}
                 ])
             else:
                 # Include ESM2 LoRA parameters + CNN/FC in optimizer
                 self.optim = tr.optim.AdamW([
-                    {"params": self.emb_model.parameters(), "lr": lr, "weight_decay": 0.0},  
-                    {"params": self.cnn.parameters(), "lr": lr * 5, "weight_decay": 0.01},       
-                    {"params": self.fc.parameters(), "lr": lr * 5, "weight_decay": 0.01}         
+                    {"params": self.emb_model.parameters(), "lr": lr_lora, "weight_decay": 0.0},  
+                    {"params": self.cnn.parameters(), "lr": lr_cnn, "weight_decay": 0.01},       
+                    {"params": self.fc.parameters(), "lr": lr_fc, "weight_decay": 0.01}         
                 ])
         else:
             # Only optimize CNN and FC when ESM2 is frozen
             self.optim = tr.optim.AdamW([
-                {"params": self.cnn.parameters(), "lr": lr, "weight_decay": 0.01},       
-                {"params": self.fc.parameters(), "lr": lr, "weight_decay": 0.01}         
+                {"params": self.cnn.parameters(), "lr": lr_cnn, "weight_decay": 0.01},       
+                {"params": self.fc.parameters(), "lr": lr_fc, "weight_decay": 0.01}         
             ])
 
         self.to(device)
@@ -283,11 +282,11 @@ class ResidualLayer(nn.Module):
         num_bottleneck_units = math.floor(
             resnet_bottleneck_factor * filters)
 
-        self.layer = nn.Sequential(nn.BatchNorm1d(filters),
+        self.layer = nn.Sequential(nn.BatchNorm1d(filters, track_running_stats=False),
         nn.ReLU(),
         nn.Conv1d(filters, num_bottleneck_units, kernel_size, 
                   dilation=dilation_rate, padding="same"), 
-        nn.BatchNorm1d(num_bottleneck_units),
+        nn.BatchNorm1d(num_bottleneck_units, track_running_stats=False),
         nn.ReLU(),
         nn.Conv1d(num_bottleneck_units, filters, kernel_size=1, padding="same"))
         # The second convolution is purely local linear transformation across
