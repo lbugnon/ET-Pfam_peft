@@ -1,15 +1,15 @@
 {
-    "window_len": 64,
+    "window_len": 32,
     "use_lora": true,
     "lr_lora": 1e-7,
     "lr_cnn": 1e-7,
     "lr_fc": 1e-7,
-    "batch_size": 2,
+    "batch_size": 1,
     "nepoch": 500,
     "patience": 10,
     "step": 4,
     "soft_max": false,
     "use_embeddings": false,
     "dataset": "mini",
-    "train_fraction": 0.1
+    "train_fraction": 0.2
 }

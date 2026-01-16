@@ -10,8 +10,7 @@ class PFamDataset(Dataset):
     Sample regions of proteins with multiple family tags.
     Proteins have precomputed per-residue embeddings.
     """
-    def __init__(self, dataset_path, emb_path, categories, win_len,
-                 debug=False, is_training=False, sequences=None):
+    def __init__(self, dataset_path, emb_path, categories, win_len, is_training=False, sequences=None, use_embeddings=False):
         """
         Initialize the PFamDataset.
         Args:
@@ -28,11 +27,9 @@ class PFamDataset(Dataset):
         self.win_len = win_len
         self.is_training = is_training
         self.sequences = sequences
+        self.use_embeddings = use_embeddings
         if sequences is not None:
             self.sequences = {record.id: str(record.seq) for record in SeqIO.parse(sequences, "fasta")}
-
-        if debug:
-            self.dataset = self.dataset.sample(n=15)
 
         # rename columns, Fin -> end, Inicio -> start
         if 'Fin' in self.dataset.columns and 'Inicio' in self.dataset.columns:
@@ -80,16 +77,12 @@ class PFamDataset(Dataset):
             ind = tr.where(label==0)[0]
             label[ind] = (1-s)/len(ind)
         
-        win = seq
-        
-        # Crop sequence to max 300 residues around window center (150 on each side)
-        #max_context = 150
-        #crop_start = max(0, center - max_context)
-        #crop_end = min(L, center + max_context)
-        # win = seq[crop_start:crop_end]
-        
-        # Adjust start/end positions relative to cropped sequence
-        #start = start - crop_start
-        #end = end - crop_start
-        
+        # Return sequence or precomputed embedding based on emb_path and use_embeddings
+        if self.emb_path is not None and self.use_embeddings:
+            # Load precomputed embedding
+            emb_file = f"{self.emb_path}{item.PID}.pk"
+            win = pickle.load(open(emb_file, "rb"))
+        else:
+            win = seq
+
         return win, label, item.PID, start, end

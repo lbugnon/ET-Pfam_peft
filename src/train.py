@@ -22,16 +22,16 @@ def train(config, categories, output_folder):
     summary = os.path.join(output_folder, "train_summary.csv")
 
     # Load training and validation datasets
-    train_data = PFamDataset(f"{config['data_path']}train.csv", config['emb_path'] if config.get('use_embeddings', True) else None,
+    train_data = PFamDataset(f"{config['data_path']}train.csv", config["emb_path"],
                             categories, win_len=config['window_len'],
-                            is_training=True, sequences=f"{config['data_path']}train.fasta")
-    dev_data = PFamDataset(f"{config['data_path']}dev.csv", config['emb_path'] if config.get('use_embeddings', True) else None,
+                            is_training=True, sequences=f"{config['data_path']}train.fasta", use_embeddings=config['use_embeddings'])
+    dev_data = PFamDataset(f"{config['data_path']}dev.csv", config["emb_path"],
                         categories, win_len=config['window_len'],
-                        is_training=False, sequences=f"{config['data_path']}dev.fasta")
+                        is_training=False, sequences=f"{config['data_path']}dev.fasta", use_embeddings=config['use_embeddings'])
     
     # Limit validation set in debug mode
     if config.get('debug', False):
-        dev_data.dataset = dev_data.dataset.head(100)
+        dev_data.dataset = dev_data.dataset.head(200)
         print(f"DEBUG MODE: Validation limited to {len(dev_data)} sequences")
 
     # Get train_fraction parameter (default to 1.0 for backward compatibility)
@@ -102,6 +102,8 @@ def train(config, categories, output_folder):
             INIT_EP, counter, best_err = 0, 0, 999.0
 
     # Training loop
+    dev_loss, dev_err, *_ = net.pred(dev_loader)
+    print(f"Initial dev loss {dev_loss:.3f}, dev err {dev_err:.3f}")
     for epoch in range(INIT_EP, config['nepoch']):
         start_time = time.time()
 

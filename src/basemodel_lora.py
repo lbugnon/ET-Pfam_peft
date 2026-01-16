@@ -153,7 +153,7 @@ class BaseModelLoRA(nn.Module):
         else:
             # When not using LoRA, freeze ESM2
             with tr.no_grad():
-                emb = self.emb_model(tokens.to(self.device), repr_layers=[33])["representations"][33][:, 1:-1, :].permute(0, 2, 1)
+                emb = self.emb_model(tokens.to(self.device), repr_layers=[33])["representations"][33].permute(0, 2, 1)
         
         return emb
 
@@ -170,20 +170,25 @@ class BaseModelLoRA(nn.Module):
     def forward_from_embeddings(self, emb, start, end):
         """Forward pass using pre-computed embeddings.
         Args:
-            emb: Pre-computed embeddings of shape [emb_size, seq_len] or [batch_size, emb_size, seq_len]
+            emb: Pre-computed embeddings of shape [emb_size, seq_len], [batch_size, emb_size, seq_len],
+                 or [batch_size, 1, emb_size, seq_len] (when loaded from pickle files)
             start: List of start positions
             end: List of end positions
         Returns:
             Predictions tensor
         """
-        # Handle both single embedding and batch
+        # Handle different embedding shapes
         if emb.dim() == 2:
-            emb = emb.unsqueeze(0)  # Add batch dimension
-            batch_size = 1
-        else:
-            batch_size = emb.shape[0]
+            # Shape: [emb_size, seq_len]
+            emb = emb.unsqueeze(0)  # Add batch dimension -> [1, emb_size, seq_len]
+        elif emb.dim() == 4:
+            # Shape: [batch_size, 1, emb_size, seq_len] (from pickle files)
+            # Squeeze the extra dimension
+            emb = emb.squeeze(1)  # -> [batch_size, emb_size, seq_len]
         
-        emb_win = tr.zeros((batch_size, emb.shape[1], 64), dtype=tr.float).to(self.device)
+        batch_size = emb.shape[0]
+        
+        emb_win = tr.zeros((batch_size, emb.shape[1], 32), dtype=tr.float).to(self.device)
         
         for k in range(batch_size):
             window_len = end[k] - start[k]
@@ -193,14 +198,21 @@ class BaseModelLoRA(nn.Module):
         y = self.fc(y.squeeze(2))
         return y
 
+
     def forward(self, seq, start, end):
         """Forward pass computing embeddings and predictions.
         Args:
-            seq: List of sequences (strings)
+            seq: List of sequences (strings) or batch of precomputed embeddings
             start: List of start positions
             end: List of end positions
         """
-        emb = self._compute_embeddings_batch(seq)
+        # Check if input is already embeddings (torch tensor) or sequences (list/strings)
+        if isinstance(seq, tr.Tensor):
+            # Input is precomputed embeddings
+            emb = seq
+        else:
+            # Input is sequences - compute embeddings using ESM2
+            emb = self._compute_embeddings_batch(seq)
         return self.forward_from_embeddings(emb, start, end)
 
     def fit(self, dataloader):
@@ -282,11 +294,11 @@ class ResidualLayer(nn.Module):
         num_bottleneck_units = math.floor(
             resnet_bottleneck_factor * filters)
 
-        self.layer = nn.Sequential(nn.BatchNorm1d(filters, track_running_stats=False),
+        self.layer = nn.Sequential(nn.BatchNorm1d(filters, track_running_stats=True),
         nn.ReLU(),
         nn.Conv1d(filters, num_bottleneck_units, kernel_size, 
                   dilation=dilation_rate, padding="same"), 
-        nn.BatchNorm1d(num_bottleneck_units, track_running_stats=False),
+        nn.BatchNorm1d(num_bottleneck_units, track_running_stats=True),
         nn.ReLU(),
         nn.Conv1d(num_bottleneck_units, filters, kernel_size=1, padding="same"))
         # The second convolution is purely local linear transformation across
