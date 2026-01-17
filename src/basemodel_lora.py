@@ -222,6 +222,13 @@ class BaseModelLoRA(nn.Module):
         self.emb_model.train()
         self.cnn.train()
         self.fc.train()
+        self.train()
+
+        # Force all BatchNorm layers back to eval mode (theres an issue when training with batch size 1 and shorter epochs)
+        for m in self.cnn.modules():
+            if isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d):
+                m.eval()
+
         self.optim.zero_grad()
         for k,(x, y, _, start, end) in enumerate(tqdm(dataloader)):
             yhat = self(x, start, end)
@@ -252,6 +259,7 @@ class BaseModelLoRA(nn.Module):
         self.emb_model.eval()
         self.cnn.eval()
         self.fc.eval()
+        self.eval()
         
         for seq, y, name, start, end in tqdm(dataloader):
             with tr.no_grad():
