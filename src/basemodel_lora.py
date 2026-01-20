@@ -9,13 +9,14 @@ class BaseModelLoRA(nn.Module):
     """
     ESM2 (with or without LoRA) + convolutional neural network with residual layers for protein family classification.
     """
-    def __init__(self, nclasses, lr_lora, lr_cnn, lr_fc, emb_size=1280,  device="cuda", 
+    def __init__(self, nclasses, win_size, lr_lora, lr_cnn, lr_fc, emb_size=1280,  device="cuda", 
                  logger=None, filters=1100, kernel_size=9, num_layers=5, 
                  first_dilated_layer=2, dilation_rate=3, resnet_bottleneck_factor=.5, use_lora=True,
                  freeze_cnn_fc=False):
         super().__init__()
 
         self.use_lora = use_lora
+        self.win_size = win_size
         self.freeze_cnn_fc = freeze_cnn_fc
         self.emb_model, alphabet = tr.hub.load("facebookresearch/esm:main",
                               "esm2_t33_650M_UR50D")
@@ -188,7 +189,7 @@ class BaseModelLoRA(nn.Module):
         
         batch_size = emb.shape[0]
         
-        emb_win = tr.zeros((batch_size, emb.shape[1], 32), dtype=tr.float).to(self.device)
+        emb_win = tr.zeros((batch_size, emb.shape[1], self.win_size), dtype=tr.float).to(self.device)
         
         for k in range(batch_size):
             window_len = end[k] - start[k]

@@ -51,6 +51,7 @@ def train(config, categories, output_folder):
     # Initialize the model
     net = BaseModel(
         len(categories),
+        win_size=config['window_len'],
         lr_lora=config['lr_lora'],
         lr_cnn=config['lr_cnn'],
         lr_fc=config['lr_fc'],
