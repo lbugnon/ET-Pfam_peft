@@ -24,7 +24,7 @@ json.dump(config, open(f"config/config_finetuned_{args.model_id}.json", "w"), in
 
 env = json.load(open("config/env.json"))
 env["device"] = args.device
-json.dump(env, open(f"{model_path}/env.json", "w"), indent=4)
+json.dump(env, open("config/env.json", "w"), indent=4)
 
 # calling training 
 import subprocess
