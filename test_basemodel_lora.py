@@ -40,7 +40,7 @@ if __name__ == "__main__":
     categories = [line.strip() for line in open(f"{config['data_path']}categories.txt")]
 
     # Load the trained model
-    model = BaseModel(len(categories), lr=config['lr'], device=config['device'])
+    model = BaseModel(len(categories), window_len=config['window_len'], device=config['device'])
     
     state_dict = tr.load(f"{output_path}/weights.pk")
     # ====
