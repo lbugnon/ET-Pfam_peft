@@ -42,7 +42,7 @@ if __name__ == "__main__":
     # Load the trained model
     model = BaseModel(len(categories), window_len=config['window_len'], device=config['device'])
     
-    state_dict = tr.load(f"{output_path}/weights.pk")
+    state_dict = tr.load(f"{output_path}/weights.pk", map_location="cuda:0")
     # ====
     # Load full pretrained
     model.load_state_dict(state_dict)
