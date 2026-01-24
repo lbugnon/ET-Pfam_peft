@@ -24,27 +24,29 @@ def predict(net, seq, window_len, use_softmax=True, step=8, max_context=150):
     
     predictions = []
     with tr.no_grad():
+        # Compute full sequence embedding once
+        full_emb = net.compute_embeddings(seq)  # shape: [emb_size, seq_len]
+        emb_len = full_emb.shape[-1]
         for center in centers:
             start_pos = max(0, center - window_len // 2)
             end_pos = min(L, start_pos + window_len)
             # Adjust if we're at the end of the sequence
             if end_pos - start_pos < window_len:
                 start_pos = max(0, end_pos - window_len)
-            
-            # Crop sequence to max 300 residues around center
-            crop_start = max(0, center - max_context)
-            crop_end = min(L, center + max_context)
-            cropped_seq = seq[crop_start:crop_end]
-            
-            # Adjust positions relative to cropped sequence
-            local_start = start_pos - crop_start
-            local_end = end_pos - crop_start
-            
-            pred = net([cropped_seq], [local_start], [local_end]).cpu().detach()
+
+            # Clamp to embedding length (should match sequence length)
+            local_start = start_pos
+            local_end = end_pos
+
+            # Slice embedding for window
+            window_emb = full_emb[:, local_start:local_end]  # [emb_size, window_len]
+            # Add batch dimension
+            window_emb = window_emb.unsqueeze(0)
+            pred = net.forward_from_embeddings(window_emb, [0], [window_emb.shape[-1]]).cpu().detach()
             predictions.append(pred)
-    
+
     pred = tr.cat(predictions, dim=0)
-    
+
     if use_softmax:
         pred = softmax(pred, dim=1)
 
