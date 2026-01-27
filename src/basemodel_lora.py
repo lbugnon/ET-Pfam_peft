@@ -39,7 +39,7 @@ class BaseModelLoRA(nn.Module):
             )
 
             self.emb_model = get_peft_model(self.emb_model, lora_config)
-            print(self.emb_model)
+            #print(self.emb_model)
         else:
             # Freeze ESM2 parameters when not using LoRA
             for param in self.emb_model.parameters():

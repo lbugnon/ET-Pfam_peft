@@ -94,7 +94,7 @@ class EnsembleModel(nn.Module):
                     sequences=sequences_path
                 )
                 dev_loader = tr.utils.data.DataLoader(dev_data, batch_size=config['batch_size'], num_workers=config.get("nworkers", 1))
-
+                print("predict model", i)
                 with tr.no_grad():
                     _, _, pred, ref, *_ = net.pred(dev_loader)
                     all_preds.append(pred.cpu())  # Move to CPU to free GPU memory
@@ -103,7 +103,7 @@ class EnsembleModel(nn.Module):
                 del net
                 tr.cuda.empty_cache()
 
-            stacked_preds = tr.stack(all_preds)
+            stacked_preds = tr.stack(all_preds).cuda()
 
         if self.voting_strategy == 'weighted_model':
             criterion = nn.CrossEntropyLoss()
