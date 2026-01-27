@@ -32,7 +32,7 @@ class EnsembleModel(nn.Module):
         # Store model directories and configs (defer loading to save GPU memory)
         self.model_dirs = []
         self.model_configs = []
-        self.device = None
+        self.device = "cuda"
 
         # Sort model directories to ensure consistent order
         model_dirs.sort()
@@ -74,7 +74,7 @@ class EnsembleModel(nn.Module):
         model.eval()
         return model
 
-    def fit(self, sequences_path):
+    def fit(self, sequences_path, debug=False):
         if self.voting_strategy in ['weighted_model', 'weighted_families']:
             # Collect predictions from each model (load one at a time to save GPU memory)
             all_preds = []
@@ -91,7 +91,8 @@ class EnsembleModel(nn.Module):
                     self.categories,
                     window_len=config['window_len'],
                     is_training=False,
-                    sequences=sequences_path
+                    sequences=sequences_path,
+                    debug=debug
                 )
                 dev_loader = tr.utils.data.DataLoader(dev_data, batch_size=config['batch_size'], num_workers=config.get("nworkers", 1))
                 print("predict model", i)
@@ -123,10 +124,9 @@ class EnsembleModel(nn.Module):
         elif self.voting_strategy == 'weighted_families':
             criterion = nn.CrossEntropyLoss()
             optimizer = tr.optim.Adam([self.family_weights], lr=0.01)
-
             for epoch in tqdm(range(500), desc="Epochs"):
                 pred_avg = tr.sum(stacked_preds * self.family_weights.view(len(self.model_dirs), 1, len(self.categories)), dim=0)
-                loss = criterion(pred_avg, tr.argmax(ref, dim=1))
+                loss = criterion(pred_avg, tr.argmax(ref, dim=1).to(self.device))
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -155,7 +155,8 @@ class EnsembleModel(nn.Module):
                 self.emb_path,
                 self.categories,
                 win_len=config['win_len'],
-                is_training=False
+                is_training=False,
+                debug=debug
             )
             test_loader = tr.utils.data.DataLoader(test_data,
                                                    batch_size=config['batch_size'],
@@ -223,20 +224,20 @@ class EnsembleModel(nn.Module):
 
         if self.voting_strategy == 'weighted_model':
             if ensemble_weights_path and os.path.exists(weights_file):
-                weights = nn.Parameter(tr.load(weights_file))
+                weights = nn.Parameter(tr.load(weights_file).to(self.device))
                 print(f"Loaded model weights from {weights_file}")
             else:
-                weights = nn.Parameter(tr.rand(len(model_dirs)))
+                weights = nn.Parameter(tr.rand(len(model_dirs), device=self.device))
                 if ensemble_weights_path:
                     print(f"Warning: {weights_file} not found, using random init.")
             return weights, weights_file
 
         elif self.voting_strategy == 'weighted_families':
             if ensemble_weights_path and os.path.exists(weights_file):
-                weights = nn.Parameter(tr.load(weights_file))
+                weights = nn.Parameter(tr.load(weights_file).to(self.device))
                 print(f"Loaded family weights from {weights_file}")
             else:
-                weights = nn.Parameter(tr.rand(len(model_dirs), len(self.categories)))
+                weights = nn.Parameter(tr.rand(len(model_dirs), len(self.categories), device=self.device))
                 if ensemble_weights_path:
                     print(f"Warning: {weights_file} not found, using random init.")
             return weights, weights_file

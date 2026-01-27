@@ -10,7 +10,7 @@ class PFamDataset(Dataset):
     Sample regions of proteins with multiple family tags.
     Proteins have precomputed per-residue embeddings.
     """
-    def __init__(self, dataset_path, emb_path, categories, window_len, is_training=False, sequences=None, use_embeddings=False):
+    def __init__(self, dataset_path, emb_path, categories, window_len, is_training=False, sequences=None, use_embeddings=False, debug=False):
         """
         Initialize the PFamDataset.
         Args:
@@ -25,6 +25,7 @@ class PFamDataset(Dataset):
         self.emb_path = emb_path
         self.categories = categories
         self.window_len = window_len
+        self.debug = debug
         self.is_training = is_training
         self.use_embeddings = use_embeddings
         if sequences is not None:
@@ -32,7 +33,9 @@ class PFamDataset(Dataset):
         # rename columns, Fin -> end, Inicio -> start
         if 'Fin' in self.dataset.columns and 'Inicio' in self.dataset.columns:
             self.dataset = self.dataset.rename(columns={'Fin': 'end', 'Inicio': 'start'})
-        
+        if self.debug:
+            self.dataset = self.dataset.sample(n=10, random_state=42).reset_index(drop=True)
+
 
     def __len__(self):
         return len(self.dataset)

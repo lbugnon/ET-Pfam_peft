@@ -32,7 +32,8 @@ def parser():
     parser.add_argument("-e", "--exp_name", type=str, required=False,
                         help="Experiment name for saving ensemble weights",
                         default=None)
-    
+    parser.add_argument("--debug", action="store_true",
+                        help="Debug mode: limit validation to 100 sequences for faster iteration.") 
     args = parser.parse_args()
     return args
 
@@ -63,4 +64,4 @@ if __name__ == "__main__":
 
         ensemble = EnsembleModel(args.models_path, config, strategy, 
                                  exp_name=args.exp_name)
-        ensemble.fit(sequences_path=f"{config['data_path']}dev.fasta")
+        ensemble.fit(sequences_path=f"{config['data_path']}dev.fasta", debug=args.debug)
