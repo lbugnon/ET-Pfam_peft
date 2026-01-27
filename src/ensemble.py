@@ -3,7 +3,7 @@ import torch as tr
 import numpy as np
 from torch import nn
 from tqdm import tqdm
-from src.basemodel import BaseModel
+from src.basemodel_lora import BaseModelLoRA as BaseModel
 from src.dataset import PFamDataset
 from src.utils import load_config, predict
 import torch.multiprocessing
@@ -29,37 +29,30 @@ class EnsembleModel(nn.Module):
             categories = [item.strip() for item in f]
         self.categories = categories
 
-        # Initialize the ensemble of models
-        self.models = nn.ModuleList()
+        # Store model directories and configs (defer loading to save GPU memory)
+        self.model_dirs = []
         self.model_configs = []
+        self.device = None
 
         # Sort model directories to ensure consistent order
         model_dirs.sort()
 
-        # Load each model's configuration and weights
+        # Load each model's configuration (but not weights yet)
         for model_dir in model_dirs:
             # Load the config.json to get the parameters
             config_path = os.path.join(model_dir, 'config.json')
             config = load_config(config_path)
 
-            lr = config['lr']
             batch_size = config['batch_size']
-            win_len = config['window_len']
+            window_len = config['window_len']
             device = config['device']
+            self.device = device
 
+            self.model_dirs.append(model_dir)
             self.model_configs.append({
-                'lr': lr,
                 'batch_size': batch_size,
-                'win_len': win_len
+                'window_len': window_len
             })
-
-            # Load the model weights
-            weights_path = os.path.join(model_dir, 'weights.pk')
-            print("loading weights from", model_dir)
-            model = BaseModel(len(categories), lr=lr, device=device)
-            model.load_state_dict(tr.load(weights_path))
-            model.eval()
-            self.models.append(model)
         
         # Initialize model weights based on voting strategy
         if self.voting_strategy in ['weighted_model', 'weighted_families']:
@@ -72,24 +65,44 @@ class EnsembleModel(nn.Module):
             elif self.voting_strategy == 'weighted_families':
                 self.family_weights = weights
 
-    def fit(self):
+    def _load_model(self, model_dir, config):
+        """Load a single model from disk."""
+        weights_path = os.path.join(model_dir, 'weights.pk')
+        print("loading weights from", model_dir)
+        model = BaseModel(len(self.categories), window_len=config['window_len'], device=self.device)
+        model.load_state_dict(tr.load(weights_path))
+        model.eval()
+        return model
+
+    def fit(self, sequences_path):
         if self.voting_strategy in ['weighted_model', 'weighted_families']:
-            # Collect predictions from each model
+            # Collect predictions from each model (load one at a time to save GPU memory)
             all_preds = []
-            for i, net in enumerate(self.models):
+            ref = None
+            for i, model_dir in enumerate(self.model_dirs):
                 config = self.model_configs[i]
+                config["sequences"] = sequences_path
+                # Load model
+                net = self._load_model(model_dir, config)
+
                 dev_data = PFamDataset(
                     f"{self.data_path}dev.csv",
                     self.emb_path,
                     self.categories,
-                    win_len=config['win_len'],
-                    is_training=False
+                    window_len=config['window_len'],
+                    is_training=False,
+                    sequences=sequences_path
                 )
                 dev_loader = tr.utils.data.DataLoader(dev_data, batch_size=config['batch_size'], num_workers=config.get("nworkers", 1))
 
                 with tr.no_grad():
                     _, _, pred, ref, *_ = net.pred(dev_loader)
-                    all_preds.append(pred)
+                    all_preds.append(pred.cpu())  # Move to CPU to free GPU memory
+
+                # Free GPU memory
+                del net
+                tr.cuda.empty_cache()
+
             stacked_preds = tr.stack(all_preds)
 
         if self.voting_strategy == 'weighted_model':
@@ -112,7 +125,7 @@ class EnsembleModel(nn.Module):
             optimizer = tr.optim.Adam([self.family_weights], lr=0.01)
 
             for epoch in tqdm(range(500), desc="Epochs"):
-                pred_avg = tr.sum(stacked_preds * self.family_weights.view(len(self.models), 1, len(self.categories)), dim=0)
+                pred_avg = tr.sum(stacked_preds * self.family_weights.view(len(self.model_dirs), 1, len(self.categories)), dim=0)
                 loss = criterion(pred_avg, tr.argmax(ref, dim=1))
 
                 optimizer.zero_grad()
@@ -130,9 +143,13 @@ class EnsembleModel(nn.Module):
         # Predicts using the centered window method on the specified dataset.
         all_preds = []
 
-        for i, net in enumerate(self.models):
+        for i, model_dir in enumerate(self.model_dirs):
             # Load the model's configuration and dataset
             config = self.model_configs[i]
+
+            # Load model
+            net = self._load_model(model_dir, config)
+
             test_data = PFamDataset(
                 f"{self.data_path}{partition}.csv",
                 self.emb_path,
@@ -140,18 +157,22 @@ class EnsembleModel(nn.Module):
                 win_len=config['win_len'],
                 is_training=False
             )
-            test_loader = tr.utils.data.DataLoader(test_data, 
-                                                   batch_size=config['batch_size'], 
+            test_loader = tr.utils.data.DataLoader(test_data,
+                                                   batch_size=config['batch_size'],
                                                    num_workers=config.get("nworkers", 1))
             net_preds = []
 
             # Predict using the model
             with tr.no_grad():
                 test_loss, test_errate, pred, *_ = net.pred(test_loader)
-                net_preds.append(pred)
+                net_preds.append(pred.cpu())  # Move to CPU to free GPU memory
             print(f"win_len = {config['win_len']} - lr = {config['lr']} - test_loss {test_loss:.5f} - test_errate {test_errate:.5f}")
             net_preds = tr.cat(net_preds)
             all_preds.append(net_preds)
+
+            # Free GPU memory
+            del net
+            tr.cuda.empty_cache()
 
         stacked_preds = tr.stack(all_preds)
         preds, preds_bin = self._combine_ensemble_predictions(stacked_preds)
@@ -160,15 +181,23 @@ class EnsembleModel(nn.Module):
     def pred_sliding(self, emb, step=4, use_softmax=False):
         all_preds = []
         all_centers = []
-        
-        for i, net in enumerate(self.models):
+
+        for i, model_dir in enumerate(self.model_dirs):
             config = self.model_configs[i]
+
+            # Load model
+            net = self._load_model(model_dir, config)
+
             net_preds = []
-            centers, pred = predict(net, emb, config['win_len'], 
+            centers, pred = predict(net, emb, config['win_len'],
                                     use_softmax=use_softmax, step=step)
-            net_preds.append(pred)
+            net_preds.append(pred.cpu())  # Move to CPU to free GPU memory
             all_preds.append(tr.cat(net_preds))
             all_centers.append(centers)
+
+            # Free GPU memory
+            del net
+            tr.cuda.empty_cache()
 
         for c in all_centers:
             if not np.allclose(c, all_centers[0]):
@@ -225,7 +254,7 @@ class EnsembleModel(nn.Module):
             pred_bin = tr.argmax(pred, dim=1)
 
         elif self.voting_strategy == 'weighted_families':
-            pred = tr.sum(stacked_preds * self.family_weights.view(len(self.models), 1, len(self.categories)), dim=0)
+            pred = tr.sum(stacked_preds * self.family_weights.view(len(self.model_dirs), 1, len(self.categories)), dim=0)
             pred_bin = tr.argmax(pred, dim=1)
 
         elif self.voting_strategy == 'simple_voting':
