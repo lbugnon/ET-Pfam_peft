@@ -103,6 +103,8 @@ if __name__ == "__main__":
                          f"Choose from {valid_strategies[:-1]} or 'all'.")
 
     config = load_config(args.config_path)
+    if config["dataset"] == "mini":
+        config["sequences"] = "data/mini/test.fasta"
 
     # Set output path
     if args.output_path:

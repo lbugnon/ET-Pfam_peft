@@ -27,17 +27,17 @@ def centered_window_test(config, model, output_folder, is_ensemble=False,
 
     # Set default parameters for ensemble or individual model
     if is_ensemble:
-        win_len, batch_size = 128, 128  # Default values for ensembles
+        window_len, batch_size = 128, 128  # Default values for ensembles
     else:
-        win_len, batch_size = config.get("window_len", 32), config.get("batch_size", 32)
+        window_len, batch_size = config.get("window_len", 32), config.get("batch_size", 32)
 
-    print(win_len, batch_size)
-    # Load the dataset
+    print(window_len, batch_size, config["sequences"])
+    sequences = config.get("sequences", None)
     data = PFamDataset(f"{data_path}{partition}.csv", emb_path, categories,
-                            win_len=win_len, is_training=False, sequences=config.get("sequences", None))
+                      window_len=window_len, is_training=False, sequences=sequences)
     loader = DataLoader(data,
-                             batch_size=batch_size,
-                             num_workers=config.get("nworkers", 4))
+                       batch_size=batch_size,
+                       num_workers=config.get("nworkers", 4))
 
     model.eval()
     if is_ensemble:

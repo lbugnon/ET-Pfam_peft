@@ -63,4 +63,4 @@ if __name__ == "__main__":
 
         ensemble = EnsembleModel(args.models_path, config, strategy, 
                                  exp_name=args.exp_name)
-        ensemble.fit()
+        ensemble.fit(sequences_path=f"{config['data_path']}dev.fasta")

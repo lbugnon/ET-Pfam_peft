@@ -62,6 +62,12 @@ def sliding_window_test(config, model, output_path, is_ensemble=False, partition
 
     # Load the test dataset
     dataset = pd.read_csv(f"{config['data_path']}{partition}.csv")
+
+    if sequences is None:
+        fasta_path = config.get("sequences", None)
+        if isinstance(fasta_path, str):
+            from Bio import SeqIO
+            sequences = {record.id: str(record.seq) for record in SeqIO.parse(fasta_path, "fasta")}
     # print(f"Total rows: {len(dataset)}")
 
     errors = []
