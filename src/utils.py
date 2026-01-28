@@ -5,7 +5,7 @@ import numpy as np
 import torch as tr
 from torch.nn.functional import softmax
 
-def predict(net, seq, window_len, use_softmax=True, step=8, max_context=150):
+def predict(net, seq, window_len, use_softmax=True, step=8, max_context=150, batch_size=128):
     """
     Predicts using a sliding window on the given sequence.
     Args:
@@ -15,18 +15,21 @@ def predict(net, seq, window_len, use_softmax=True, step=8, max_context=150):
         use_softmax: Whether to apply softmax to the predictions.
         step: Step size for the sliding window.
         max_context: Maximum context around window center (default 150 for 300 total)
+        batch_size: Number of windows to process in parallel (default 128)
     Returns:
         centers: The center positions of the sliding windows.
         pred: The predictions from the model (num_windows x num_classes).
     """
     L = len(seq)
     centers = np.arange(0, L, step)
-    
-    predictions = []
+
     with tr.no_grad():
         # Compute full sequence embedding once
         full_emb = net.compute_embeddings(seq)  # shape: [emb_size, seq_len]
-        emb_len = full_emb.shape[-1]
+
+        # Pre-extract all windows
+        windows = []
+        window_lengths = []
         for center in centers:
             start_pos = max(0, center - window_len // 2)
             end_pos = min(L, start_pos + window_len)
@@ -34,18 +37,30 @@ def predict(net, seq, window_len, use_softmax=True, step=8, max_context=150):
             if end_pos - start_pos < window_len:
                 start_pos = max(0, end_pos - window_len)
 
-            # Clamp to embedding length (should match sequence length)
-            local_start = start_pos
-            local_end = end_pos
+            window_emb = full_emb[:, start_pos:end_pos]  # [emb_size, actual_len]
+            windows.append(window_emb)
+            window_lengths.append(window_emb.shape[-1])
 
-            # Slice embedding for window
-            window_emb = full_emb[:, local_start:local_end]  # [emb_size, window_len]
-            # Add batch dimension
-            window_emb = window_emb.unsqueeze(0)
-            pred = net.forward_from_embeddings(window_emb, [0], [window_emb.shape[-1]]).cpu().detach()
-            predictions.append(pred)
+        # Process windows in batches
+        all_preds = []
+        for i in range(0, len(windows), batch_size):
+            batch_windows = windows[i:i + batch_size]
+            batch_lengths = window_lengths[i:i + batch_size]
 
-    pred = tr.cat(predictions, dim=0)
+            # Stack windows (they may have different lengths, forward_from_embeddings handles padding)
+            max_len = max(batch_lengths)
+            emb_size = full_emb.shape[0]
+            batched = tr.zeros((len(batch_windows), emb_size, max_len), device=full_emb.device)
+            for j, w in enumerate(batch_windows):
+                batched[j, :, :w.shape[-1]] = w
+
+            # Single forward pass for entire batch
+            starts = [0] * len(batch_windows)
+            ends = batch_lengths
+            batch_pred = net.forward_from_embeddings(batched, starts, ends).cpu().detach()
+            all_preds.append(batch_pred)
+
+        pred = tr.cat(all_preds, dim=0)
 
     if use_softmax:
         pred = softmax(pred, dim=1)
