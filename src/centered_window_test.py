@@ -8,7 +8,7 @@ from sklearn.metrics import accuracy_score
 from src.dataset import PFamDataset
 
 def centered_window_test(config, model, output_folder, is_ensemble=False,
-                         voting_strategy=None, partition='test'):
+                         voting_strategy=None, partition='test', debug=False):
     """
     Evaluates a model (individual or ensemble) on the test dataset using the 
     centered window technique.
@@ -18,6 +18,7 @@ def centered_window_test(config, model, output_folder, is_ensemble=False,
         output_folder (str): Folder where results will be saved.
         is_ensemble (bool, optional): Whether the model is an ensemble. Default is False.
         voting_strategy (str, optional): Voting strategy used (e.g., "simple voting").
+        debug (bool, optional): Reduce the number of samples for a quick test (default: False).     
     """
     # Load configuration parameters
     data_path = config['data_path']
@@ -34,7 +35,7 @@ def centered_window_test(config, model, output_folder, is_ensemble=False,
     print(window_len, batch_size, config["sequences"])
     sequences = config.get("sequences", None)
     data = PFamDataset(f"{data_path}{partition}.csv", emb_path, categories,
-                      window_len=window_len, is_training=False, sequences=sequences)
+                      window_len=window_len, is_training=False, sequences=sequences, debug=debug)
     loader = DataLoader(data,
                        batch_size=batch_size,
                        num_workers=config.get("nworkers", 4))
@@ -42,7 +43,7 @@ def centered_window_test(config, model, output_folder, is_ensemble=False,
     model.eval()
     if is_ensemble:
         # Get the ensemble predictions
-        _, pred_bin = model.pred(partition=partition)
+        _, pred_bin = model.pred(partition=partition, sequences=sequences, debug=debug)
 
         # Collect ground truth references
         ref = [] 
@@ -57,7 +58,7 @@ def centered_window_test(config, model, output_folder, is_ensemble=False,
 
     else: 
         # Get the base model predictions
-        _, err_rate, pred, ref, *_ = model.pred(loader)
+        _, err_rate, pred, ref, *_ = model.pred(loader, debug=debug)
 
         ref_bin = tr.argmax(ref, dim=1)
         pred_bin = tr.argmax(pred, dim=1)

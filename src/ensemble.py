@@ -70,7 +70,7 @@ class EnsembleModel(nn.Module):
         weights_path = os.path.join(model_dir, 'weights.pk')
         print("loading weights from", model_dir)
         model = BaseModel(len(self.categories), window_len=config['window_len'], device=self.device)
-        model.load_state_dict(tr.load(weights_path))
+        model.load_state_dict(tr.load(weights_path, map_location=self.device))
         model.eval()
         return model
 
@@ -112,7 +112,7 @@ class EnsembleModel(nn.Module):
 
             for epoch in tqdm(range(500), desc="Epochs"):
                 pred_avg = tr.sum(stacked_preds * self.model_weights.view(-1, 1, 1), dim=0)
-                loss = criterion(pred_avg, tr.argmax(ref, dim=1))
+                loss = criterion(pred_avg, tr.argmax(ref, dim=1).to(self.device))
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -139,7 +139,7 @@ class EnsembleModel(nn.Module):
         pred, _ = self.pred(batch)
         return pred
 
-    def pred(self, partition='test'):
+    def pred(self, partition='test', sequences=None, debug=False):
         # Predicts using the centered window method on the specified dataset.
         all_preds = []
 
@@ -154,8 +154,9 @@ class EnsembleModel(nn.Module):
                 f"{self.data_path}{partition}.csv",
                 self.emb_path,
                 self.categories,
-                win_len=config['win_len'],
+                window_len=config['window_len'],
                 is_training=False,
+                sequences=sequences,
                 debug=debug
             )
             test_loader = tr.utils.data.DataLoader(test_data,
@@ -167,7 +168,7 @@ class EnsembleModel(nn.Module):
             with tr.no_grad():
                 test_loss, test_errate, pred, *_ = net.pred(test_loader)
                 net_preds.append(pred.cpu())  # Move to CPU to free GPU memory
-            print(f"win_len = {config['win_len']} - lr = {config['lr']} - test_loss {test_loss:.5f} - test_errate {test_errate:.5f}")
+            print(f"window_len = {config['window_len']}  - test_loss {test_loss:.5f} - test_errate {test_errate:.5f}")
             net_preds = tr.cat(net_preds)
             all_preds.append(net_preds)
 
@@ -190,7 +191,7 @@ class EnsembleModel(nn.Module):
             net = self._load_model(model_dir, config)
 
             net_preds = []
-            centers, pred = predict(net, emb, config['win_len'],
+            centers, pred = predict(net, emb, config['window_len'],
                                     use_softmax=use_softmax, step=step)
             net_preds.append(pred.cpu())  # Move to CPU to free GPU memory
             all_preds.append(tr.cat(net_preds))

@@ -49,12 +49,14 @@ def parser():
     parser.add_argument("-e", "--exp_name", type=str, required=False,
                         help="Experiment name for saving ensemble weights",
                         default=None)
+    parser.add_argument("--debug", action='store_true',
+                        help="Reduce the number of samples for a quick test")
     
     args = parser.parse_args()
     return args
 
 def run_ensemble_tests(models_path, config, voting_strategy, output_path,
-                       ensemble_weights_path, exp_name=None, partition='test'):
+                       ensemble_weights_path, exp_name=None, partition='test', debug=False):
     """
     Loads the ensemble weights (if needed) and runs both sliding and centered 
     window tests.
@@ -66,9 +68,11 @@ def run_ensemble_tests(models_path, config, voting_strategy, output_path,
         ensemble_weights_path (str, optional): Path for ensemble weights.
         exp_name (str, optional): Experiment name for saving ensemble weights.
         partition (str, optional): Dataset partition to test on (default: 'test').
+        debug (bool, optional): Reduce the number of samples for a quick test (default: False).
     """
     width = os.get_terminal_size().columns
 
+    config["sequences"] = f"data/mini/{partition}.fasta"
     print(f"Running ensemble tests with voting strategy: {voting_strategy}")
     if voting_strategy in ['weighted_model', 'weighted_families']:
         print(f"Using model weights from: {ensemble_weights_path}")
@@ -82,12 +86,12 @@ def run_ensemble_tests(models_path, config, voting_strategy, output_path,
     print("\n" + "-" * width)
     print("\nRunning centered window test...")
     CwS = centered_window_test(config, ensemble, output_path, is_ensemble=True,
-                         voting_strategy=voting_strategy, partition=partition)
+                         voting_strategy=voting_strategy, partition=partition, debug=debug)
 
     print("\n" + "-" * width)
     print("\nRunning sliding window test...")
     _, SwA, SwC = sliding_window_test(config, ensemble, output_path, is_ensemble=True,
-                                       partition=partition)
+                                       partition=partition, debug=debug)
 
     return CwS, SwA, SwC
 
@@ -138,7 +142,8 @@ if __name__ == "__main__":
                                             output_path=path,
                                             ensemble_weights_path=ensemble_weights_path,
                                             exp_name=args.exp_name,
-                                            partition=args.partition)
+                                            partition=args.partition,
+                                            debug=args.debug)
         results.add_entry(strategy, CwS, SwA, SwC)
 
     results_file = os.path.join(output_path, "ensemble_metrics.csv")

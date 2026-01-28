@@ -46,7 +46,7 @@ def _predict_coverage(categories, pred, start, end, gold_label):
     return [prediction, score.item(), prediction == gold_label]
 
 
-def sliding_window_test(config, model, output_path, is_ensemble=False, partition='test', sequences=None):
+def sliding_window_test(config, model, output_path, is_ensemble=False, partition='test', sequences=None, debug=False):
     """
     Run sliding window prediction on a test dataset and evaluate three prediction strategies:
     max score, area under curve, and coverage-based majority voting.
@@ -54,6 +54,7 @@ def sliding_window_test(config, model, output_path, is_ensemble=False, partition
         config (dict): Configuration dictionary containing paths and parameters.
         model (torch.nn.Module): The trained model or ensemble to evaluate.
         output_path (str): Directory to save the results and summary.
+        debug (bool, optional): Reduce the number of samples for a quick test (default: False).
     """
     # Paths and parameters
     data_path = config['data_path']
@@ -62,6 +63,8 @@ def sliding_window_test(config, model, output_path, is_ensemble=False, partition
 
     # Load the test dataset
     dataset = pd.read_csv(f"{config['data_path']}{partition}.csv")
+    if debug:
+        dataset = dataset.groupby('PID').head(5).reset_index(drop=True)
 
     if sequences is None:
         fasta_path = config.get("sequences", None)
