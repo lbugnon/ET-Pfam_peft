@@ -78,24 +78,29 @@ def sliding_window_test(config, model, output_path, is_ensemble=False, partition
 
     model.eval() # Set model to evaluation mode
 
-    # Iterate over the proteins to make predictions with the model
-    for pid in tqdm(dataset.PID.unique()):
+    # Get unique PIDs
+    pids = dataset.PID.unique().tolist()
+    if debug:
+        pids = pids[:5]
 
-        emb = sequences[pid]
-        # Load the embedding for the current PID
-        #emb_file = f"{config['emb_path']}{pid}.pk"
-        #if not os.path.isfile(emb_file):
-        #    print(f"Missing embedding: {pid}")
-        #    continue
-        #emb = pickle.load(open(emb_file, "rb")).squeeze().float()
+    # For ensemble models, use batch prediction (loads each model once for all proteins)
+    if is_ensemble:
+        print("Running batch prediction for ensemble (efficient mode)...")
+        batch_results = model.pred_sliding_batch(sequences, pids,
+                                                  step=config['step'],
+                                                  use_softmax=config['soft_max'])
+
+    # Iterate over the proteins to process predictions
+    for pid in tqdm(pids):
 
         # Get the predictions from the model using the sliding window approach
         if is_ensemble:
-            # For ensemble models, use the ensemble prediction method
-            centers, pred = model.pred_sliding(emb, step=config['step'], use_softmax=config['soft_max'])
+            # For ensemble models, use precomputed batch results
+            centers, pred = batch_results[pid]
         else:
             # For single models, use the predict function
-            centers, pred = predict(model, emb, config['window_len'], 
+            emb = sequences[pid]
+            centers, pred = predict(model, emb, config['window_len'],
                                     use_softmax=config['soft_max'], step=config['step'])
 
         # Get labeled domains for the current PID

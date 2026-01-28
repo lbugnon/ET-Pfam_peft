@@ -176,7 +176,7 @@ class EnsembleModel(nn.Module):
             del net
             tr.cuda.empty_cache()
 
-        stacked_preds = tr.stack(all_preds)
+        stacked_preds = tr.stack(all_preds).to(self.device)
         preds, preds_bin = self._combine_ensemble_predictions(stacked_preds)
         return preds, preds_bin
 
@@ -205,9 +205,58 @@ class EnsembleModel(nn.Module):
             if not np.allclose(c, all_centers[0]):
                 raise ValueError("Model predictions have misaligned window centers.")
 
-        stacked_preds = tr.stack(all_preds) 
+        stacked_preds = tr.stack(all_preds).to(self.device)
         preds, preds_bin = self._combine_ensemble_predictions(stacked_preds)
         return centers, preds.cpu().detach()
+
+    def pred_sliding_batch(self, sequences, pids, step=4, use_softmax=False):
+        """
+        Efficient batch prediction for multiple proteins.
+        Loads each model once and processes all proteins before freeing.
+
+        Args:
+            sequences: Dict mapping pid -> embedding (or sequence data)
+            pids: List of protein IDs to process
+            step: Step size for sliding window
+            use_softmax: Whether to apply softmax to predictions
+
+        Returns:
+            Dict mapping pid -> (centers, combined_preds)
+        """
+        # Store predictions per model per protein: {pid: [model_preds...]}
+        all_model_preds = {pid: [] for pid in pids}
+        all_centers = {pid: None for pid in pids}
+
+        # For each model, load once and process all proteins
+        for i, model_dir in enumerate(self.model_dirs):
+            config = self.model_configs[i]
+
+            # Load model once
+            net = self._load_model(model_dir, config)
+
+            # Process all proteins with this model
+            for pid in tqdm(pids, desc=f"Model {i+1}/{len(self.model_dirs)}"):
+                emb = sequences[pid]
+                centers, pred = predict(net, emb, config['window_len'],
+                                        use_softmax=use_softmax, step=step)
+                all_model_preds[pid].append(pred.cpu())
+
+                # Store centers (should be same across models for same protein)
+                if all_centers[pid] is None:
+                    all_centers[pid] = centers
+
+            # Free GPU memory after processing all proteins with this model
+            del net
+            tr.cuda.empty_cache()
+
+        # Combine predictions for each protein
+        results = {}
+        for pid in pids:
+            stacked_preds = tr.stack(all_model_preds[pid]).to(self.device)
+            preds, _ = self._combine_ensemble_predictions(stacked_preds)
+            results[pid] = (all_centers[pid], preds.cpu().detach())
+
+        return results
 
     def _initialize_weights(self, model_dirs, ensemble_weights_path, exp_name=None):
         """Initializes the weights for the ensemble based on the voting strategy."""
@@ -225,7 +274,7 @@ class EnsembleModel(nn.Module):
 
         if self.voting_strategy == 'weighted_model':
             if ensemble_weights_path and os.path.exists(weights_file):
-                weights = nn.Parameter(tr.load(weights_file).to(self.device))
+                weights = nn.Parameter(tr.load(weights_file)).to(self.device)
                 print(f"Loaded model weights from {weights_file}")
             else:
                 weights = nn.Parameter(tr.rand(len(model_dirs), device=self.device))
