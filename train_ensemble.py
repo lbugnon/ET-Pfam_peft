@@ -42,7 +42,7 @@ if __name__ == "__main__":
     args = parser()
     width = os.get_terminal_size().columns
 
-    valid_strategies = ['flatten_linear', 'weighted_model', 'weighted_families', 'all']
+    valid_strategies = ['flatten_mlp', 'flatten_linear', 'weighted_model', 'weighted_families', 'all']
     if args.voting_strategy not in valid_strategies:
         if args.voting_strategy in ['simple_voting', 'score_voting']:
             raise ValueError(f"Voting strategy '{args.voting_strategy}' does not require training. " \

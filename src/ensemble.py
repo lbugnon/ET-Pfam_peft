@@ -30,7 +30,33 @@ class FlattenLinear(nn.Module): # stackin perceptron
 
         return out  # (batch, num_classes)
 
+class FlattenMLP(nn.Module): # stacked MLP
+    """Flatten all predictions and apply a two-layer MLP."""
+    def __init__(self, num_models, num_classes, hidden_size=4096, bias=True):
+        super(FlattenMLP, self).__init__()
+        input_size = num_models * num_classes
+        
+        # Two-layer MLP
+        self.fc1 = nn.Linear(input_size, hidden_size, bias=bias)
+        self.fc2 = nn.Linear(hidden_size, num_classes, bias=bias)
 
+    def forward(self, x): # x: (num_models, batch, num_classes)
+        # Permute to (batch, num_models, num_classes)
+        x = x.permute(1, 0, 2)
+        
+        # Flatten to (batch, num_models * num_classes)
+        batch_size = x.shape[0]
+        x_flat = x.reshape(batch_size, -1)
+        
+        # First layer with ReLU activation
+        h = self.fc1(x_flat)  # (batch, hidden_size)
+        h = tr.relu(h)
+        
+        # Second layer to output
+        out = self.fc2(h)
+
+        return out  # (batch, num_classes)
+    
 
 class EnsembleModel(nn.Module):
     def __init__(self, models_path, config, voting_strategy, ensemble_weights_path=None, 
@@ -78,20 +104,15 @@ class EnsembleModel(nn.Module):
             })
         
         # Initialize model weights based on voting strategy
-        if self.voting_strategy in ['flatten_linear', 'weighted_model', 'weighted_families']:
+        if self.voting_strategy in ['flatten_mlp', 'flatten_linear', 'weighted_model', 'weighted_families']:
             weights, weights_file = self._initialize_weights(model_dirs, 
                                                              ensemble_weights_path,
                                                              len(self.categories),
                                                              exp_name
                                                              )
             self.weights_file = weights_file
-            if self.voting_strategy == 'weighted_model':
-                self.model_weights = weights
-            elif self.voting_strategy == 'weighted_families':
-                self.family_weights = weights
-            elif self.voting_strategy == 'flatten_linear':
-                self.flatten_linear_weights = weights
-
+            self.model_weights = weights
+            
     def _load_model(self, model_dir, config):
         """Load a single model from disk."""
         weights_path = os.path.join(model_dir, 'weights.pk')
@@ -102,10 +123,11 @@ class EnsembleModel(nn.Module):
         return model
 
     def fit(self, sequences_path, debug=False):
-        if self.voting_strategy in ['flatten_linear', 'weighted_model', 'weighted_families']:
+        if self.voting_strategy in ['flatten_mlp', 'flatten_linear', 'weighted_model', 'weighted_families']:
             # Save/load all_preds in the parent folder of model_dir
-            preds_cache_path = os.path.join(self.path, 'all_preds.pk')
-            ref_cache_path = os.path.join(self.path, 'ref.pk')
+            preds_cache_path = os.path.join(self.path, 'all_preds_dev.pk')
+            ref_cache_path = os.path.join(self.path, 'ref_dev.pk')
+
             if os.path.exists(preds_cache_path) and os.path.exists(ref_cache_path):
                 print(f"Loading cached predictions from {preds_cache_path}")
                 with open(preds_cache_path, 'rb') as f:
@@ -148,17 +170,18 @@ class EnsembleModel(nn.Module):
                     pickle.dump(ref, f)
             stacked_preds = tr.stack(all_preds).cuda()
 
-        if self.voting_strategy == 'flatten_linear':
+        if self.voting_strategy == 'flatten_linear' or self.voting_strategy == 'flatten_mlp':
             save_log = True
             criterion = nn.CrossEntropyLoss()
             # Allow optional L2 regularization on voting-layer parameters
-            optimizer = tr.optim.Adam(self.flatten_linear_weights.parameters(), lr=1e-4, weight_decay=1e-4)
+            optimizer = tr.optim.Adam(self.model_weights.parameters(), lr=0.01, weight_decay=1e-4)
+            
             # Training log
             training_log = []
             log_file = self.weights_file.replace('.pt', '_training_log.csv')
 
             for epoch in tqdm(range(500), desc="Epochs"):
-                pred_avg = self.flatten_linear_weights(stacked_preds)
+                pred_avg = self.model_weights(stacked_preds)
                 loss = criterion(pred_avg.to(self.device), tr.argmax(ref, dim=1).to(self.device))
 
                 optimizer.zero_grad()
@@ -182,7 +205,7 @@ class EnsembleModel(nn.Module):
                         writer.writeheader()
                         writer.writerows(training_log)
                     
-                tr.save(self.flatten_linear_weights.state_dict(), self.weights_file)
+                tr.save(self.model_weights.state_dict(), self.weights_file)
 
             print(f"Training completed. Final weights saved to {self.weights_file}")
 
@@ -223,14 +246,11 @@ class EnsembleModel(nn.Module):
         # Predicts using the centered window method on the specified dataset.
         all_preds = []
         # Save/load all_preds in the parent folder of model_dir
-        preds_cache_path = os.path.join(self.path, 'all_preds.pk')
-        ref_cache_path = os.path.join(self.path, 'ref.pk')
-        if os.path.exists(preds_cache_path) and os.path.exists(ref_cache_path):
+        preds_cache_path = os.path.join(self.path, 'all_preds.pk' if partition=='test' else 'all_preds_dev.pk')
+        if os.path.exists(preds_cache_path):
             print(f"Loading cached predictions from {preds_cache_path}")
             with open(preds_cache_path, 'rb') as f:
                 all_preds = pickle.load(f) 
-            with open(ref_cache_path, 'rb') as f:
-                ref = pickle.load(f)
         else:
             for i, model_dir in enumerate(self.model_dirs):
                 # Load the model's configuration and dataset
@@ -267,8 +287,6 @@ class EnsembleModel(nn.Module):
             # cache all_preds and ref for faster training later
             with open(preds_cache_path, 'wb') as f:
                 pickle.dump(all_preds, f)
-            with open(ref_cache_path, 'wb') as f:
-                pickle.dump(ref, f)
 
         stacked_preds = tr.stack(all_preds).to(self.device)
         preds, preds_bin = self._combine_ensemble_predictions(stacked_preds)
@@ -382,7 +400,6 @@ class EnsembleModel(nn.Module):
             file_name = f"{self.voting_strategy}_ensemble_{exp_name}.pt"
         else:
             file_name = f"{self.voting_strategy}_ensemble.pt"
-
         # If ensemble_weights_path is provided, use it to load weights
         if ensemble_weights_path:
             weights_file = f"{ensemble_weights_path}{file_name}"
@@ -390,7 +407,12 @@ class EnsembleModel(nn.Module):
             weights_file = f"{self.path}{file_name}"
 
         if self.voting_strategy == "flatten_linear":
-            weights = FlattenLinear(len(model_dirs), num_classes, bias=True).to(self.device)
+            weights = FlattenLinear(len(model_dirs), num_classes).to(self.device)
+            weights.load_state_dict(tr.load(weights_file, map_location=self.device)) 
+            return weights, weights_file
+        elif self.voting_strategy == "flatten_mlp":
+            weights = FlattenMLP(len(model_dirs), num_classes).to(self.device)
+            weights.load_state_dict(tr.load(weights_file, map_location=self.device)) 
             return weights, weights_file
 
         elif self.voting_strategy == 'weighted_model':
@@ -418,8 +440,8 @@ class EnsembleModel(nn.Module):
     def _combine_ensemble_predictions(self, stacked_preds):
         """ Combines predictions from the ensemble models based on the voting strategy."""
         
-        if self.voting_strategy == 'flatten_linear':
-            pred = self.flatten_linear_weights(stacked_preds)
+        if self.voting_strategy == 'flatten_linear' or self.voting_strategy == 'flatten_mlp':
+            pred = self.model_weights(stacked_preds)
             pred_bin = tr.argmax(pred, dim=1)
         elif self.voting_strategy == 'score_voting':
             pred = tr.mean(stacked_preds, dim=0)
@@ -429,7 +451,7 @@ class EnsembleModel(nn.Module):
             pred_bin = tr.argmax(pred, dim=1)
 
         elif self.voting_strategy == 'weighted_families':
-            pred = tr.sum(stacked_preds * self.family_weights.view(len(self.model_dirs), 1, len(self.categories)), dim=0)
+            pred = tr.sum(stacked_preds * self.model_weights.view(len(self.model_dirs), 1, len(self.categories)), dim=0)
             pred_bin = tr.argmax(pred, dim=1)
 
         elif self.voting_strategy == 'simple_voting':
