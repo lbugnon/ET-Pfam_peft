@@ -20,7 +20,7 @@ tr.multiprocessing.set_sharing_strategy('file_system')
 def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v","--voting_strategy", type=str, required=True, 
-                        help="Voting strategy: 'weighted_model'," \
+                        help="Voting strategy: 'flatten_linear', 'weighted_model'," \
                         " 'weighted_families', 'all'")
     parser.add_argument("-m","--models_path", type=str, required=True, 
                         help="Path to the models to ensemble",
@@ -42,7 +42,7 @@ if __name__ == "__main__":
     args = parser()
     width = os.get_terminal_size().columns
 
-    valid_strategies = ['weighted_model', 'weighted_families', 'all']
+    valid_strategies = ['flatten_linear', 'weighted_model', 'weighted_families', 'all']
     if args.voting_strategy not in valid_strategies:
         if args.voting_strategy in ['simple_voting', 'score_voting']:
             raise ValueError(f"Voting strategy '{args.voting_strategy}' does not require training. " \

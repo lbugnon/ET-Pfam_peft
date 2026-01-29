@@ -29,8 +29,8 @@ tr.multiprocessing.set_sharing_strategy('file_system')
 def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v","--voting_strategy", type=str, required=True, 
-                        help="Voting strategy: 'simple_voting', 'score_voting', " \
-                        "'weighted_model', 'weighted_families', 'all'")
+                        help="Voting strategy: 'flatten_linear', 'weighted_families', 'simple_voting', 'score_voting', " \
+                        "'weighted_model', 'all'")
     parser.add_argument("-m","--models_path", type=str, required=True, 
                         help="Path to the models to ensemble",
                         default="models/mini/")
@@ -74,7 +74,7 @@ def run_ensemble_tests(models_path, config, voting_strategy, output_path,
 
     config["sequences"] = f"data/mini/{partition}.fasta"
     print(f"Running ensemble tests with voting strategy: {voting_strategy}")
-    if voting_strategy in ['weighted_model', 'weighted_families']:
+    if voting_strategy in ['flatten_linear', 'weighted_model', 'weighted_families']:
         print(f"Using model weights from: {ensemble_weights_path}")
 
     ensemble = EnsembleModel(models_path, config,
@@ -100,8 +100,8 @@ if __name__ == "__main__":
     width = os.get_terminal_size().columns
 
     # Validate voting strategy
-    valid_strategies = ['simple_voting', 'score_voting', 'weighted_model',
-                        'weighted_families', 'all']
+    valid_strategies = ['flatten_linear', 'weighted_families', 'simple_voting', 'score_voting', 'weighted_model',
+                         'all']
     if args.voting_strategy not in valid_strategies:
         raise ValueError(f"Invalid voting strategy: {args.voting_strategy}. " \
                          f"Choose from {valid_strategies[:-1]} or 'all'.")
