@@ -2,14 +2,19 @@
     "window_len": 32,
     "use_lora": true,
     "lr_lora": 1e-4,
-    "lr_cnn": 1e-5,
-    "lr_fc": 1e-5,
+    "lr_cnn": 1e-6,
+    "lr_fc": 1e-6,
     "batch_size": 2,
+    "nworkers": 4,
     "nepoch": 500,
     "patience": 10,
     "step": 4,
     "soft_max": false,
     "use_embeddings": false,
     "dataset": "mini",
-    "train_fraction": 1.0
+    "train_fraction": 1.0,
+    "use_amp": true,
+    "accumulation_steps": 4,
+    "warmup_epochs": 2,
+    "prefetch_factor": 2
 }
