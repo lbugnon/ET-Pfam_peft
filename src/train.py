@@ -9,6 +9,28 @@ from src.dataset import PFamDataset
 from src.basemodel_lora import BaseModelLoRA as BaseModel
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+
+class WarmupScheduler:
+    """Learning rate scheduler with warmup."""
+    def __init__(self, optimizer, warmup_epochs, base_lrs):
+        self.optimizer = optimizer
+        self.warmup_epochs = warmup_epochs
+        self.base_lrs = base_lrs
+        self.current_epoch = 0
+        
+    def step(self):
+        """Call at the start of each epoch."""
+        self.current_epoch += 1
+        if self.current_epoch <= self.warmup_epochs:
+            # Linear warmup
+            warmup_factor = self.current_epoch / self.warmup_epochs
+            for i, param_group in enumerate(self.optimizer.param_groups):
+                param_group['lr'] = self.base_lrs[i] * warmup_factor
+        else:
+            # Restore base learning rates after warmup
+            for i, param_group in enumerate(self.optimizer.param_groups):
+                param_group['lr'] = self.base_lrs[i]
+
 def train(config, categories, output_folder):
     """
     Trains a base model.
@@ -44,9 +66,15 @@ def train(config, categories, output_folder):
     else:
         print("train", len(train_data), "dev", len(dev_data))
 
-    # Create validation data loader (fixed across epochs)
-    dev_loader = DataLoader(dev_data, batch_size=config['batch_size'],
-                            num_workers=config['nworkers'])
+    # Create validation data loader (fixed across epochs) - with optimizations
+    dev_loader = DataLoader(
+        dev_data, 
+        batch_size=config['batch_size'],
+        num_workers=config.get('nworkers', 1),
+        pin_memory=True,
+        persistent_workers=config.get('nworkers', 1) > 0,
+        prefetch_factor=config.get('prefetch_factor', 2)
+    )
 
     # Initialize the model
     net = BaseModel(
@@ -56,8 +84,19 @@ def train(config, categories, output_folder):
         lr_cnn=config['lr_cnn'],
         lr_fc=config['lr_fc'],
         device=config['device'],
-        freeze_cnn_fc=config.get('freeze_cnn_fc', False)
+        freeze_cnn_fc=config.get('freeze_cnn_fc', False),
+        use_amp=config.get('use_amp', True),
+        accumulation_steps=config.get('accumulation_steps', 1)
     )
+    
+    # Setup warmup scheduler if configured
+    warmup_epochs = config.get('warmup_epochs', 0)
+    if warmup_epochs > 0:
+        base_lrs = [param_group['lr'] for param_group in net.optim.param_groups]
+        warmup_scheduler = WarmupScheduler(net.optim, warmup_epochs, base_lrs)
+        print(f"Using warmup for first {warmup_epochs} epochs")
+    else:
+        warmup_scheduler = None
     
     # Load pretrained weights if specified
     if config.get('pretrained_path'):
@@ -108,18 +147,38 @@ def train(config, categories, output_folder):
     for epoch in range(INIT_EP, config['nepoch']):
         start_time = time.time()
 
-        # Create train loader (with sampling if enabled)
+        # Apply warmup if configured
+        if warmup_scheduler is not None:
+            warmup_scheduler.step()
+            current_lrs = [f"{pg['lr']:.2e}" for pg in net.optim.param_groups]
+            print(f"  LR: {current_lrs}")
+        
+        # Create train loader (with sampling if enabled) - with optimizations
         if use_sampling:
             # Generate random indices for this epoch
             indices = tr.randperm(len(train_data))[:num_train_samples].tolist()
             sampler = SubsetRandomSampler(indices)
-            train_loader = DataLoader(train_data, batch_size=config['batch_size'],
-                                    sampler=sampler, num_workers=config['nworkers'])
+            train_loader = DataLoader(
+                train_data, 
+                batch_size=config['batch_size'],
+                sampler=sampler, 
+                num_workers=config.get('nworkers', 1),
+                pin_memory=True,
+                persistent_workers=config.get('nworkers', 1) > 0,
+                prefetch_factor=config.get('prefetch_factor', 2)
+            )
         else:
             # Create loader once if not using sampling
             if epoch == INIT_EP:
-                train_loader = DataLoader(train_data, batch_size=config['batch_size'],
-                                        shuffle=True, num_workers=config['nworkers'])
+                train_loader = DataLoader(
+                    train_data, 
+                    batch_size=config['batch_size'],
+                    shuffle=True, 
+                    num_workers=config.get('nworkers', 1),
+                    pin_memory=True,
+                    persistent_workers=config.get('nworkers', 1) > 0,
+                    prefetch_factor=config.get('prefetch_factor', 2)
+                )
 
         train_loss = net.fit(train_loader)
         dev_loss, dev_err, *_ = net.pred(dev_loader)

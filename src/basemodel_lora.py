@@ -4,6 +4,7 @@ from torch import nn
 from tqdm import tqdm
 from sklearn.metrics import balanced_accuracy_score, accuracy_score
 from peft import LoraConfig, get_peft_model
+from torch.cuda.amp import autocast, GradScaler
 
 class BaseModelLoRA(nn.Module): 
     """
@@ -12,12 +13,17 @@ class BaseModelLoRA(nn.Module):
     def __init__(self, nclasses, window_len, lr_lora=1e-4, lr_cnn=1e-3, lr_fc=1e-3, emb_size=1280,  device="cuda", 
                  logger=None, filters=1100, kernel_size=9, num_layers=5, 
                  first_dilated_layer=2, dilation_rate=3, resnet_bottleneck_factor=.5, use_lora=True,
-                 freeze_cnn_fc=False):
+                 freeze_cnn_fc=False, use_amp=True, accumulation_steps=1):
         super().__init__()
 
         self.use_lora = use_lora
         self.window_len = window_len
         self.freeze_cnn_fc = freeze_cnn_fc
+        self.use_amp = use_amp
+        self.accumulation_steps = accumulation_steps
+        
+        # Initialize mixed precision scaler
+        self.scaler = GradScaler() if use_amp else None
         self.emb_model, alphabet = tr.hub.load("facebookresearch/esm:main",
                               "esm2_t33_650M_UR50D")
         self.batch_converter = alphabet.get_batch_converter()
@@ -88,6 +94,7 @@ class BaseModelLoRA(nn.Module):
 
         print("BaseModelLoRA initialized with", sum(p.numel() for p in self.parameters() if p.requires_grad), "trainable parameters. ESM2 PEFT parameters : ", 
               sum(p.numel() for p in self.emb_model.parameters() if p.requires_grad))
+        print(f"AMP (Mixed Precision): {use_amp}, Accumulation Steps: {accumulation_steps}")
 
     def load_cnn_fc_weights(self, pretrained_weights_path):
         """
@@ -217,7 +224,6 @@ class BaseModelLoRA(nn.Module):
         return self.forward_from_embeddings(emb, start, end)
 
     def fit(self, dataloader):
-
         avg_loss = 0
         # Set all components to training mode
         self.emb_model.train()
@@ -231,23 +237,58 @@ class BaseModelLoRA(nn.Module):
                 m.eval()
 
         self.optim.zero_grad()
+        
         for k,(x, y, _, start, end) in enumerate(tqdm(dataloader)):
-            yhat = self(x, start, end)
-            y = y.to(self.device)
+            # Mixed precision forward pass
+            if self.use_amp:
+                with autocast():
+                    yhat = self(x, start, end)
+                    y = y.to(self.device)
+                    loss = self.loss(yhat, y)
+                    # Scale loss for gradient accumulation
+                    loss = loss / self.accumulation_steps
+                
+                # Backward with gradient scaling
+                self.scaler.scale(loss).backward()
+            else:
+                yhat = self(x, start, end)
+                y = y.to(self.device)
+                loss = self.loss(yhat, y)
+                loss = loss / self.accumulation_steps
+                loss.backward()
 
-            loss = self.loss(yhat, y)
-            loss.backward()
+            # Only update weights after accumulation_steps
+            if (k + 1) % self.accumulation_steps == 0:
+                # Gradient clipping - use smaller max_norm for stability with LoRA
+                if self.use_amp:
+                    self.scaler.unscale_(self.optim)
+                tr.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
+                
+                # Optimizer step
+                if self.use_amp:
+                    self.scaler.step(self.optim)
+                    self.scaler.update()
+                else:
+                    self.optim.step()
+                self.optim.zero_grad()
 
-            # Add gradient clipping to prevent exploding gradients
-            tr.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
-
-            avg_loss += loss.item()
-            self.optim.step()
-            self.optim.zero_grad()
-
+            avg_loss += loss.item() * self.accumulation_steps  # Scale back for reporting
+            
             if self.logger is not None:
-                self.logger.add_scalar("Loss/train", loss, self.train_steps)
+                self.logger.add_scalar("Loss/train", loss * self.accumulation_steps, self.train_steps)
             self.train_steps+=1
+        
+        # Handle any remaining gradients (if dataloader length not divisible by accumulation_steps)
+        if (k + 1) % self.accumulation_steps != 0:
+            if self.use_amp:
+                self.scaler.unscale_(self.optim)
+            tr.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
+            if self.use_amp:
+                self.scaler.step(self.optim)
+                self.scaler.update()
+            else:
+                self.optim.step()
+            self.optim.zero_grad()
 
         avg_loss /= len(dataloader)
 
@@ -264,9 +305,16 @@ class BaseModelLoRA(nn.Module):
         
         for seq, y, name, start, end in tqdm(dataloader):
             with tr.no_grad():
-                yhat = self(seq, start, end)
-                y = y.to(self.device)
-                test_loss += self.loss(yhat, y).item()
+                # Use autocast for consistent mixed precision during evaluation
+                if self.use_amp:
+                    with autocast():
+                        yhat = self(seq, start, end)
+                        y = y.to(self.device)
+                        test_loss += self.loss(yhat, y).item()
+                else:
+                    yhat = self(seq, start, end)
+                    y = y.to(self.device)
+                    test_loss += self.loss(yhat, y).item()
 
             names += name
             starts.append(start)
